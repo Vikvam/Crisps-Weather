@@ -1338,10 +1338,12 @@ const precipColor = '#64b5f6';
         this._hideTooltip();
         this._bgContainer?.destroy();
         this._bgContainer = null;
+        this._icon?.destroy();
+        this._icon = null;
+        this._label?.destroy();
+        this._label = null;
         this._box?.destroy();
         this._box = null;
-        this._icon = null;
-        this._label = null;
         this._indicator?.destroy();
         this._indicator = null;
     }
