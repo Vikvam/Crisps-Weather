@@ -1,18 +1,23 @@
-# <img src="icon.png" width="48" align="left"> Chips Weather
+# <img src="icon.png" width="48" align="left"> Crisps Weather
 
 GNOME Shell extension showing current weather in the panel with an hourly and daily forecast popup.
 
+Crisps Weather is a fork of [Chips Weather](https://github.com/ninjabucket/Chips-Weather) by ninjabucket,
+with a rewritten backend, favourite locations and timezone-correct forecasts. It uses its own UUID and
+settings, so it can be installed alongside the original.
+
 ## Features
 
-- **Panel indicator** — current temperature with weather icon
-- **Hourly forecast** — 8-hour paginated view with temperature, UV index, and precipitation probability
-- **Daily view** — 7-day forecast with high/low temperatures, weather icons, and precipitation
-- **Color-coded temps** — blue-to-red gradient (optional)
-- **Color-coded UV** — WHO scale labels (optional)
-- **Mixed conditions** — dual icons when weather is split between two conditions
-- **Auto-location** — IP-based geolocation via ipapi.co
-- **Open-Meteo** — free weather API, no key required
-- **Global** — US shows `City, ST`, everywhere else shows `City, Country`
+- **Panel indicator**: the current temperature, the weather icon, or both
+- **Hourly forecast**: paginated 7-day hourly view with temperature, UV index and precipitation probability
+- **Daily view**: 7-day forecast with high/low range bars; hover a day for details, click it for its hours
+- **Favourite locations**: search by city name, postal code (e.g. `11000, CZ`) or coordinates (`50.08, 14.42`), and switch between them from the popup
+- **Automatic location**: GNOME Location Services (GeoClue), falling back to IP geolocation (can be turned off)
+- **Correct local time**: forecasts are shown in the location's own timezone, so far-away favourites show the right "Now" and "Today"
+- **12/24-hour clock**: follows the system setting by default
+- **Configurable refresh**: every 60 minutes by default (15–240), also refreshed after resume or reconnect when the data is stale
+- **Color-coded temps and UV** (optional)
+- **Open-Meteo**: free weather API, no key required
 
 ![Screenshot](forecast-screenshot.png)
 
@@ -22,32 +27,45 @@ GNOME Shell 45, 46, 47, 48, 49, 50
 
 ## Installation
 
-### From extensions.gnome.org
-
-Install from [extensions.gnome.org](https://extensions.gnome.org/extension/10001/chips-weather/)
-
-### Manual
-
 ```bash
-git clone https://github.com/ninjabucket/Chips-Weather.git
-cp -r Chips-Weather ~/.local/share/gnome-shell/extensions/weather@chip
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/weather@chip/schemas
+git clone https://github.com/Vikvam/Chips-Weather.git
+cd Chips-Weather
+./pack.sh
+gnome-extensions install --force crisps-weather@vikvam.github.io.shell-extension.zip
 ```
 
-Restart GNOME Shell (Alt+F2 → `r` on X11, logout/login on Wayland), then enable in Extensions.
+Log out and back in (Wayland) or restart GNOME Shell (Alt+F2 → `r` on X11), then enable
+**Crisps Weather** in Extensions.
 
 ## Preferences
 
-- Temperature unit (Celsius / Fahrenheit)
-- Temperature position (left / right of icon)
-- Dynamic temperature color (on / off)
-- Dynamic UV color (on / off)
+**Locations**
+- Current location: detected location, re-detect, allow/disallow IP-based lookup
+- Favourites: choose the active location, reorder, remove
+- Add location: search by name, postal code or coordinates
+
+**General**
+- Temperature unit (Celsius / Fahrenheit; wind follows as km/h / mph)
+- Clock format (system default / 24-hour / 12-hour)
+- Panel display (temperature / icon / both) and temperature position
+- Refresh interval
+- UV index and rain chance columns, dynamic temperature and UV colors
 
 ## Data Sources
 
-- Weather: [Open-Meteo](https://open-meteo.com)
-- Location: [ipapi.co](https://ipapi.co)
+- Weather and geocoding: [Open-Meteo](https://open-meteo.com)
+- Postal code and place search fallback: [Nominatim / OpenStreetMap](https://nominatim.openstreetmap.org) (only when you search in Preferences)
+- Automatic location: GNOME Location Services, or [ipinfo.io](https://ipinfo.io) when allowed
+- Coordinate names: GWeather's offline city database
+
+## Development
+
+```bash
+gjs -m tests/run.js   # unit tests for lib/ (no GNOME Shell needed)
+./pack.sh             # build crisps-weather@vikvam.github.io.shell-extension.zip
+```
 
 ## License
 
-GPL-2.0-or-later
+GPL-2.0-or-later, see [COPYING](COPYING).
+Original work © 2026 chip ([ninjabucket](https://github.com/ninjabucket)); modifications © 2026 Vikvam.

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <enum id="org.gnome.shell.extensions.crisps-weather.PanelDisplay">
+    <value nick="temp" value="0"/>
+    <value nick="icon" value="1"/>
+    <value nick="temp-icon" value="2"/>
+  </enum>
+  <enum id="org.gnome.shell.extensions.crisps-weather.ClockFormat">
+    <value nick="system" value="0"/>
+    <value nick="12h" value="1"/>
+    <value nick="24h" value="2"/>
+  </enum>
+
+  <schema id="org.gnome.shell.extensions.crisps-weather"
+          path="/org/gnome/shell/extensions/crisps-weather/">
+
+    <!-- Units & display -->
+    <key name="temperature-unit" type="s">
+      <default>"celsius"</default>
+      <summary>Temperature unit</summary>
+      <description>Unit for temperature display: celsius or fahrenheit (wind follows: km/h or mph)</description>
+    </key>
+    <key name="panel-display" enum="org.gnome.shell.extensions.crisps-weather.PanelDisplay">
+      <default>"temp"</default>
+      <summary>Panel display</summary>
+      <description>What the panel indicator shows: temperature, weather icon, or both</description>
+    </key>
+    <key name="temperature-position" type="s">
+      <default>"right"</default>
+      <summary>Temperature position</summary>
+      <description>Position of temperature relative to icon when both are shown: left or right</description>
+    </key>
+    <key name="clock-format" enum="org.gnome.shell.extensions.crisps-weather.ClockFormat">
+      <default>"system"</default>
+      <summary>Clock format</summary>
+      <description>system follows org.gnome.desktop.interface clock-format</description>
+    </key>
+    <key name="use-colored-temps" type="b">
+      <default>true</default>
+      <summary>Dynamic temperature color</summary>
+      <description>Use blue-to-red gradient for temperature values</description>
+    </key>
+    <key name="use-colored-uv" type="b">
+      <default>true</default>
+      <summary>Dynamic UV color</summary>
+      <description>Use color-coded UV index labels</description>
+    </key>
+    <key name="show-uv-index" type="b">
+      <default>true</default>
+      <summary>Show UV index</summary>
+      <description>Display UV index in hourly forecast rows</description>
+    </key>
+    <key name="show-precipitation" type="b">
+      <default>true</default>
+      <summary>Show precipitation</summary>
+      <description>Display precipitation chance in hourly forecast rows</description>
+    </key>
+
+    <!-- Refresh -->
+    <key name="refresh-interval" type="u">
+      <range min="15" max="240"/>
+      <default>60</default>
+      <summary>Refresh interval (minutes)</summary>
+      <description>How old the forecast may get before it is fetched again</description>
+    </key>
+
+    <!-- Locations -->
+    <key name="favorites" type="a(sssdd)">
+      <default>[]</default>
+      <summary>Favourite locations</summary>
+      <description>List of (name, region, ISO-2 country, latitude, longitude)</description>
+    </key>
+    <key name="active-location" type="s">
+      <default>"auto"</default>
+      <summary>Active location</summary>
+      <description>"auto" for the detected location, or a favourite id "lat,lon" (4 decimals)</description>
+    </key>
+    <key name="allow-ip-lookup" type="b">
+      <default>true</default>
+      <summary>Allow IP geolocation</summary>
+      <description>When Location Services are off or unavailable, look up the approximate location from the IP address via ipinfo.io</description>
+    </key>
+    <key name="auto-location-cache" type="s">
+      <default>""</default>
+      <summary>Detected location cache</summary>
+      <description>JSON {location, source, timestamp}; empty triggers re-detection</description>
+    </key>
+  </schema>
+</schemalist>

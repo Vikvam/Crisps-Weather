@@ -1,7 +1,7 @@
 {
-  "description": "Panel indicator showing current temperature and weather icon. Popup menu displays an 8-hour hourly forecast with temperature, UV index, precipitation probability, and color-coded temps. Daily view with high/low temperatures and dual weather icons for mixed conditions. Automatic location detection via IP. Supports Celsius/Fahrenheit.",
-  "name": "Chips Weather",
-  "settings-schema": "org.gnome.shell.extensions.weather",
+  "description": "Panel indicator showing the current temperature (optionally with a weather icon). Popup menu with an hourly forecast (temperature, UV index, precipitation probability, color-coded temps) and a 7-day daily view. Favourite locations searchable by name, postal code or coordinates, plus automatic location via GNOME Location Services or IP. Celsius/Fahrenheit, 12/24-hour clock. Weather data from Open-Meteo.\n\nBased on Chips Weather by ninjabucket.",
+  "name": "Crisps Weather",
+  "settings-schema": "org.gnome.shell.extensions.crisps-weather",
   "shell-version": [
     "45",
     "46",
@@ -10,6 +10,6 @@
     "49",
     "50"
   ],
-  "url": "https://github.com/ninjabucket/Chips-Weather",
-  "uuid": "weather@chip"
+  "url": "https://github.com/Vikvam/Chips-Weather",
+  "uuid": "crisps-weather@vikvam.github.io"
 }
