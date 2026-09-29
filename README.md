@@ -1,4 +1,4 @@
-# <img src="icon.png" width="48" align="left"> Crisps Weather
+# <img src="icon.svg" width="48" align="left"> Crisps Weather
 
 GNOME Shell extension showing current weather in the panel with an hourly and daily forecast popup.
 
@@ -9,14 +9,18 @@ settings, so it can be installed alongside the original.
 ## Features
 
 - **Panel indicator**: the current temperature, the weather icon, or both
-- **Hourly forecast**: paginated 7-day hourly view with temperature, UV index and precipitation probability
-- **Daily view**: 7-day forecast with high/low range bars; hover a day for details, click it for its hours
+- **Current conditions**: temperature, feels-like, today's high/low, rain chance, wind and UV
+- **Three forecast views**, switchable in the popup (the last one is remembered):
+  - **Hourly**: paginated 7-day table with temperature, UV index and rain chance
+  - **Chart**: 24-hour temperature curve over rain-chance bars; hover for details
+  - **Daily**: 7-day forecast with high/low range bars; hover a day for details, click it for its hours
 - **Favourite locations**: search by city name, postal code (e.g. `11000, CZ`) or coordinates (`50.08, 14.42`), and switch between them from the popup
 - **Automatic location**: GNOME Location Services (GeoClue), falling back to IP geolocation (can be turned off)
 - **Correct local time**: forecasts are shown in the location's own timezone, so far-away favourites show the right "Now" and "Today"
 - **12/24-hour clock**: follows the system setting by default
-- **Configurable refresh**: every 60 minutes by default (15–240), also refreshed after resume or reconnect when the data is stale
-- **Color-coded temps and UV** (optional)
+- **Configurable refresh**: every 60 minutes by default (15–240), also refreshed after resume or reconnect when the data is stale; the popup shows when the data was fetched and whether the last update failed
+- **Light and dark shell styles** (GNOME 47+), color-coded temperatures and UV (optional)
+- **Keyboard accessible** popup
 - **Open-Meteo**: free weather API, no key required
 
 ![Screenshot](forecast-screenshot.png)
@@ -30,12 +34,11 @@ GNOME Shell 45, 46, 47, 48, 49, 50
 ```bash
 git clone https://github.com/Vikvam/Chips-Weather.git
 cd Chips-Weather
-./pack.sh
-gnome-extensions install --force crisps-weather@vikvam.github.io.shell-extension.zip
+./install.sh
 ```
 
-Log out and back in (Wayland) or restart GNOME Shell (Alt+F2 → `r` on X11), then enable
-**Crisps Weather** in Extensions.
+This packs, installs and enables the extension. GNOME Shell only loads newly installed or
+updated extension code at login, so log out and back in afterwards (the script offers to).
 
 ## Preferences
 

@@ -1,32 +1,386 @@
-.weather-forecast-row {
+/* Crisps Weather: layout, and colours for the dark shell style.
+ * stylesheet-light.css imports this file and overrides the colours. */
+
+/* ---- Panel ---- */
+
+.cw-panel-label {
+    padding: 0 4px;
+    font-weight: bold;
+}
+
+/* ---- Popup frame ---- */
+
+.cw-item,
+.cw-item:hover,
+.cw-item:focus,
+.cw-item:active {
+    padding: 4px 10px;
+    background-color: transparent;
+}
+
+.cw-content {
+    min-width: 330px;
+}
+
+.cw-location {
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+.cw-location-box {
     spacing: 6px;
+}
+
+.cw-location-icon {
+    icon-size: 14px;
+}
+
+/* ---- Current conditions ---- */
+
+.cw-current {
+    spacing: 12px;
+    padding: 4px 8px 8px 8px;
+}
+
+.cw-current-icon {
+    icon-size: 48px;
+}
+
+.cw-current-temp {
+    font-size: 2.4em;
+    font-weight: 300;
+}
+
+.cw-current-text {
+    spacing: 2px;
+}
+
+.cw-current-desc {
+    font-weight: bold;
+}
+
+.cw-current-detail {
+    font-size: 0.9em;
+}
+
+/* ---- View switcher ---- */
+
+.cw-tabs {
+    spacing: 2px;
+    padding: 3px;
+    border-radius: 999px;
+}
+
+.cw-tab {
+    padding: 4px 16px;
+    border-radius: 999px;
+    font-size: 0.9em;
+    transition-duration: 100ms;
+}
+
+.cw-tab:checked {
+    font-weight: bold;
+}
+
+.cw-subtitle {
+    font-size: 0.85em;
+    padding: 6px 0 4px 0;
+}
+
+.cw-chip {
     padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.85em;
 }
 
-.weather-forecast-icon {
-    icon-size: 20px;
-    min-width: 24px;
+.cw-subtitle-box {
+    spacing: 6px;
 }
 
-.weather-precip-icon {
+/* ---- Hourly table ---- */
+
+.cw-row {
+    padding: 3px 8px;
+    spacing: 6px;
+    border-radius: 6px;
+}
+
+.cw-hour-time {
+    font-weight: bold;
+    min-width: 58px;
+}
+
+.cw-row-icon {
+    icon-size: 16px;
+    min-width: 20px;
+}
+
+.cw-precip {
+    font-size: 0.85em;
+    min-width: 34px;
+}
+
+.cw-uv {
+    font-size: 0.85em;
+    min-width: 40px;
+}
+
+
+.cw-cond {
+    font-size: 0.85em;
+}
+
+.cw-temp {
+    font-weight: bold;
+}
+
+/* ---- Daily list ---- */
+
+.cw-day {
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.cw-day-box {
+    spacing: 6px;
+}
+
+.cw-day-name {
+    font-weight: bold;
+    min-width: 48px;
+}
+
+.cw-day-icons {
+    min-width: 34px;
+    spacing: 2px;
+}
+
+.cw-day-icon2 {
     icon-size: 12px;
 }
 
-.weather-bg-box {
-    padding: 6px 0;
-    min-width: 200px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+.cw-low,
+.cw-high {
+    min-width: 30px;
 }
 
-.weather-nav-btn {
-    font-size: 22px;
-    min-width: 36px;
-    padding: 4px;
-    border-radius: 6px;
-    transition: background-color 100ms;
+.cw-low {
+    text-align: right;
 }
 
-.weather-nav-btn:hover {
+.cw-high {
+    font-weight: bold;
+}
+
+.cw-range-track {
+    min-width: 100px;
+    height: 4px;
+    border-radius: 2px;
+}
+
+.cw-range-bar {
+    height: 4px;
+    border-radius: 2px;
+}
+
+/* ---- Chart ---- */
+
+.cw-chart {
+    spacing: 2px;
+    padding: 0 4px;
+}
+
+.cw-chart-readout {
+    font-size: 0.85em;
+    padding-bottom: 2px;
+}
+
+.cw-chart-area {
+    height: 120px;
+}
+
+.cw-chart-icon {
+    icon-size: 16px;
+}
+
+.cw-chart-hour {
+    font-size: 0.8em;
+}
+
+/* ---- Footer ---- */
+
+.cw-footer {
+    spacing: 2px;
+    padding-top: 4px;
+}
+
+.cw-icon-btn {
+    padding: 6px;
+    border-radius: 999px;
+    transition-duration: 100ms;
+}
+
+.cw-icon-btn StIcon {
+    icon-size: 16px;
+}
+
+.cw-updated,
+.cw-page {
+    font-size: 0.85em;
+}
+
+.cw-updated {
+    padding: 0 6px;
+}
+
+/* ---- Status (loading / error / no location) ---- */
+
+.cw-status {
+    spacing: 8px;
+    padding: 12px 8px;
+}
+
+.cw-status-title {
+    font-weight: bold;
+}
+
+.cw-status-detail {
+    font-size: 0.85em;
+}
+
+.cw-status-buttons {
+    spacing: 8px;
+    padding-top: 4px;
+}
+
+/* ---- Day tooltip ---- */
+
+.cw-tooltip {
+    padding: 10px 12px;
+    border-radius: 12px;
+    spacing: 3px;
+    width: 230px;
+}
+
+.cw-tooltip-top {
+    spacing: 8px;
+    padding-bottom: 2px;
+}
+
+.cw-tooltip-icon {
+    icon-size: 28px;
+}
+
+.cw-tooltip-title {
+    font-weight: bold;
+    font-size: 1.05em;
+}
+
+.cw-tooltip-summary {
+    font-size: 0.9em;
+    padding-bottom: 6px;
+}
+
+.cw-tooltip-hilo {
+    spacing: 12px;
+    padding-bottom: 6px;
+}
+
+.cw-tooltip-detail {
+    spacing: 4px;
+    font-size: 0.9em;
+}
+
+.cw-tooltip-key {
+    min-width: 76px;
+}
+
+.cw-tooltip-periods {
+    spacing: 2px;
+    padding-top: 6px;
+}
+
+.cw-tooltip-period {
+    spacing: 6px;
+    font-size: 0.9em;
+}
+
+.cw-tooltip-period-icon {
+    icon-size: 14px;
+    min-width: 18px;
+}
+
+.cw-tooltip-period-name {
+    font-weight: bold;
+    min-width: 72px;
+}
+
+/* ---- Colours (dark) ---- */
+
+/* Content items are non-reactive, which the shell theme dims as :insensitive. */
+.popup-menu .popup-menu-item.cw-item:insensitive {
+    color: #ffffff;
+}
+
+.cw-dim,
+.cw-cond,
+.cw-low,
+.cw-subtitle,
+.cw-updated,
+.cw-page,
+.cw-chart-hour,
+.cw-status-detail,
+.cw-tooltip-key,
+.cw-tooltip-summary {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.cw-stale {
+    color: #f6d32d;
+}
+
+.cw-precip {
+    color: #64b5f6;
+}
+
+.cw-tabs,
+.cw-chip {
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.cw-tab:hover,
+.cw-chip:hover,
+.cw-icon-btn:hover,
+.cw-day:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.cw-tab:focus,
+.cw-chip:focus,
+.cw-icon-btn:focus,
+.cw-day:focus {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.cw-tab:checked {
     background-color: rgba(255, 255, 255, 0.2);
+}
+
+.cw-row-alt {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.cw-range-track {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.cw-tooltip {
+    color: #eeeeee;
+    background-color: rgba(36, 36, 36, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.cw-range-bar-plain {
+    background-color: rgba(255, 255, 255, 0.55);
 }

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Crisps Weather icon. Original artwork, © 2026 Vikvam, GPL-2.0-or-later (see COPYING). -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#1c71d8"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9f06b"/>
+      <stop offset="1" stop-color="#f5c211"/>
+    </linearGradient>
+    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#deddda"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#sky)"/>
+  <g stroke="#f6d32d" stroke-width="6" stroke-linecap="round">
+    <line x1="78" y1="14" x2="78" y2="22"/>
+    <line x1="106" y1="42" x2="98" y2="42"/>
+    <line x1="97.8" y1="22.2" x2="92.1" y2="27.9"/>
+    <line x1="58.2" y1="22.2" x2="63.9" y2="27.9"/>
+    <line x1="97.8" y1="61.8" x2="92.1" y2="56.1"/>
+  </g>
+  <circle cx="78" cy="42" r="16" fill="url(#sun)"/>
+  <path d="M34 98 h56 a16 16 0 0 0 1.5 -31.9 a22 22 0 0 0 -42.3 -4.6 a18 18 0 0 0 -15.2 36.5 z"
+        fill="url(#cloud)" stroke="#c0bfbc" stroke-width="1"/>
+</svg>

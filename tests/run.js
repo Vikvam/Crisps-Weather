@@ -9,6 +9,7 @@ import {
     displayName, locationId, parseCoordinates,
     readFavorites, splitCountrySuffix, writeFavorites,
 } from '../lib/location.js';
+import {dominantCode, iconName, tempColor, uvStyle} from '../lib/conditions.js';
 import {formatClock, formatHour, formatWeekday, resolveClockFormat} from '../lib/timeFormat.js';
 
 const ROOT = GLib.path_get_dirname(GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]));
@@ -176,6 +177,30 @@ test('favorites round-trip', () => {
     const favs = [{name: 'Prague', admin1: 'Prague', country: 'CZ', lat: 50.088, lon: 14.4208}];
     writeFavorites(s, favs);
     eq(readFavorites(s), favs);
+});
+
+print('conditions');
+
+test('iconName uses night icons only where they exist', () => {
+    eq(iconName(0, false), 'weather-clear-night-symbolic');
+    eq(iconName(61, false), 'weather-showers-symbolic');
+    eq(iconName(12345), 'weather-clear-symbolic');
+});
+
+test('tempColor gives the same band for equivalent °C and °F', () => {
+    for (const [c, f] of [[-5, 23], [5, 41], [15, 59], [20, 68], [27, 81], [32, 90], [40, 104]])
+        eq(tempColor(f, '°F'), tempColor(c, '°C'), `${c}°C / ${f}°F`);
+    assert(tempColor(20, '°C', 'light') !== tempColor(20, '°C', 'dark'), 'light palette differs');
+});
+
+test('uvStyle levels', () => {
+    eq([0, 3, 6, 8, 11].map(uv => uvStyle(uv).label), ['Low', 'Moderate', 'High', 'Very High', 'Extreme']);
+});
+
+test('dominantCode prefers the more frequent, then the more severe code', () => {
+    eq(dominantCode([{code: 3}, {code: 61}, {code: 3}]), 3);
+    eq(dominantCode([{code: 3}, {code: 61}]), 61);
+    eq(dominantCode([]), 0);
 });
 
 print(`\n${passed} passed, ${failed} failed`);

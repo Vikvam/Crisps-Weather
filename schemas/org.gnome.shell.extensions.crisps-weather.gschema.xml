@@ -11,6 +11,12 @@
     <value nick="24h" value="2"/>
   </enum>
 
+  <enum id="org.gnome.shell.extensions.crisps-weather.PopupView">
+    <value nick="hourly" value="0"/>
+    <value nick="chart" value="1"/>
+    <value nick="daily" value="2"/>
+  </enum>
+
   <schema id="org.gnome.shell.extensions.crisps-weather"
           path="/org/gnome/shell/extensions/crisps-weather/">
 
@@ -54,6 +60,12 @@
       <default>true</default>
       <summary>Show precipitation</summary>
       <description>Display precipitation chance in hourly forecast rows</description>
+    </key>
+
+    <key name="popup-view" enum="org.gnome.shell.extensions.crisps-weather.PopupView">
+      <default>"hourly"</default>
+      <summary>Forecast view</summary>
+      <description>The forecast view the popup opens with: hourly table, hourly chart or daily; remembers the last one used</description>
     </key>
 
     <!-- Refresh -->

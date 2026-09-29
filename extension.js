@@ -22,182 +22,103 @@
 //                         7-day hourly + daily forecast, refresh scheduling, retries.
 //  lib/openMeteo.js       normalizes the response into a model keyed by the
 //                         location's local wall-clock time.
+//  lib/conditions.js      weather codes → icons/labels, colour scales.
+//  ui/chart.js            hourly chart (St.DrawingArea + Cairo).
+//  ui/dayTooltip.js       details card for a hovered day.
 //  extension.js           this file: panel indicator + popup, driven by manager events.
+//
+//  Popup layout
+//  ------------
+//  location switcher (submenu)
+//  current conditions
+//  ───────────────────────
+//  [ Hourly | Chart | Daily ]      tabs (remembered in `popup-view`)
+//  subtitle / day filter chip
+//  view (table, chart or days)     rebuilt with a cross-fade on page/view change
+//  ↻  Updated 14:05   ◀ 1/21 ▶  ⚙  footer
 
 import Clutter from 'gi://Clutter';
-import GLib from 'gi://GLib';
-import Pango from 'gi://Pango';
+import Gio from 'gi://Gio';
 import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import {iconName, tempColor, uvStyle, weatherDesc} from './lib/conditions.js';
 import {displayName, locationId, readAutoCache} from './lib/location.js';
 import {
-    createInterfaceSettings, formatClock, formatHour, formatShortDate,
+    createInterfaceSettings, formatHour, formatShortDate, formatUnixClock,
     formatWeekday, resolveClockFormat,
 } from './lib/timeFormat.js';
 import {WeatherManager} from './lib/weatherManager.js';
+import {SLOTS, buildChart, vertical} from './ui/chart.js';
+import {buildDayTooltip} from './ui/dayTooltip.js';
 
-// WMO weather codes → GNOME symbolic icon names.
-// Full code table: https://www.nodc.noaa.gov/archive/arc0021/0002199/1.1/data/0-data/HTML/WMO-CODE/WMO4677.HTM
-const DAY_ICON_MAP = {
-    0: 'weather-clear-symbolic',
-    1: 'weather-few-clouds-symbolic',
-    2: 'weather-few-clouds-symbolic',
-    3: 'weather-overcast-symbolic',
-    45: 'weather-fog-symbolic',
-    48: 'weather-fog-symbolic',
-    51: 'weather-showers-scattered-symbolic',
-    53: 'weather-showers-scattered-symbolic',
-    55: 'weather-showers-scattered-symbolic',
-    56: 'weather-snow-symbolic',
-    57: 'weather-snow-symbolic',
-    61: 'weather-showers-symbolic',
-    63: 'weather-showers-symbolic',
-    65: 'weather-showers-symbolic',
-    66: 'weather-freezing-rain-symbolic',
-    67: 'weather-freezing-rain-symbolic',
-    71: 'weather-snow-symbolic',
-    73: 'weather-snow-symbolic',
-    75: 'weather-snow-symbolic',
-    77: 'weather-snow-symbolic',
-    80: 'weather-showers-scattered-symbolic',
-    81: 'weather-showers-symbolic',
-    82: 'weather-showers-symbolic',
-    85: 'weather-snow-symbolic',
-    86: 'weather-snow-symbolic',
-    95: 'weather-storm-symbolic',
-    96: 'weather-storm-symbolic',
-    99: 'weather-storm-symbolic',
-};
+const ROWS_PER_PAGE = 8;
+const FADE_OUT_MS = 80;
+const FADE_IN_MS = 140;
+const RANGE_BAR_PX = 100;
 
-// Night icons only exist for clear/few-clouds. All other codes fall through to DAY_ICON_MAP.
-const NIGHT_ICON_MAP = {
-    0: 'weather-clear-night-symbolic',
-    1: 'weather-few-clouds-night-symbolic',
-    2: 'weather-few-clouds-night-symbolic',
-};
+const VIEWS = [
+    {id: 'hourly', label: 'Hourly'},
+    {id: 'chart', label: 'Chart'},
+    {id: 'daily', label: 'Daily'},
+];
 
-// Short condition labels for hourly rows
-const WEATHER_SHORT = {
-    0: 'Clear', 1: 'Few Clouds', 2: 'Partly Cloudy', 3: 'Overcast',
-    45: 'Foggy', 48: 'Rime Fog',
-    51: 'Drizzle', 53: 'Drizzle', 55: 'Drizzle',
-    56: 'Freezing Drizzle', 57: 'Freezing Drizzle',
-    61: 'Rain', 63: 'Rain', 65: 'Heavy Rain',
-    66: 'Freezing Rain', 67: 'Freezing Rain',
-    71: 'Snow', 73: 'Snow', 75: 'Heavy Snow', 77: 'Snow Grains',
-    80: 'Showers', 81: 'Showers', 82: 'Heavy Showers',
-    85: 'Snow Showers', 86: 'Snow Showers',
-    95: 'Storm', 96: 'Hail Storm', 99: 'Hail Storm',
-};
-
-const WIND_DIRS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-const PER_PAGE = 8;
-const PRECIP_COLOR = '#64b5f6';
-
-function iconName(code, isDay) {
-    if (!isDay && NIGHT_ICON_MAP[code] !== undefined)
-        return NIGHT_ICON_MAP[code];
-    return DAY_ICON_MAP[code] || 'weather-clear-symbolic';
-}
-
-function weatherDesc(code) {
-    return WEATHER_SHORT[code] || 'Unknown';
-}
-
-function windDir(deg) {
-    return WIND_DIRS[Math.round(deg / 22.5) % 16];
-}
-
-function windLabel(speed, unit) {
-    const kmh = unit === 'mph' ? speed * 1.609 : speed;
-    if (kmh < 5) return 'Calm';
-    if (kmh < 20) return 'Light';
-    if (kmh < 40) return 'Breezy';
-    if (kmh < 60) return 'Windy';
-    if (kmh < 80) return 'Strong';
-    return 'Gusty';
-}
-
-function tempColor(t, unit) {
-    if (unit === '°F') {
-        if (t < 32) return '#64b5f6';
-        if (t < 50) return '#42a5f5';
-        if (t < 65) return '#26a69a';
-        if (t < 75) return '#66bb6a';
-        if (t < 85) return '#ffca28';
-        if (t < 95) return '#ffa726';
-        return '#ef5350';
-    }
-    if (t < 0) return '#64b5f6';
-    if (t < 10) return '#42a5f5';
-    if (t < 18) return '#26a69a';
-    if (t < 24) return '#66bb6a';
-    if (t < 30) return '#ffca28';
-    if (t < 35) return '#ffa726';
-    return '#ef5350';
-}
-
-function uvStyle(uv) {
-    if (uv <= 2) return {color: '#8bc34a', label: 'Low'};
-    if (uv <= 5) return {color: '#ffc107', label: 'Moderate'};
-    if (uv <= 7) return {color: '#ff9800', label: 'High'};
-    if (uv <= 10) return {color: '#f44336', label: 'Very High'};
-    return {color: '#ce93d8', label: 'Extreme'};
-}
+// Hours shown per page, used to keep roughly the same time in view when switching.
+const PAGE_HOURS = {hourly: ROWS_PER_PAGE, chart: SLOTS};
 
 // Extension lifecycle: enable() creates everything, disable() must destroy/disconnect all.
-export default class WeatherExtension extends Extension {
+export default class CrispsWeatherExtension extends Extension {
     enable() {
         this._model = null;
         this._status = 'loading'; // 'loading' | 'ok' | 'error' | 'no-location'
-        this._viewMode = 'hourly';
-        this._forecastPage = 0;
+        this._page = 0;
         this._activeDate = null;
-        this._bgContainer = null;
         this._tooltip = null;
-        this._fadeInId = 0;
-        this._fadeOutId = 0;
+        this._tabs = null;
+        this._viewHolder = null;
+        this._footerBox = null;
 
         this._settings = this.getSettings();
         this._interfaceSettings = createInterfaceSettings();
+        this._view = this._settings.get_string('popup-view');
+        this._hourView = this._view === 'chart' ? 'chart' : 'hourly';
 
+        const rebuild = () => this._rebuildMenu();
         this._settings.connectObject(
             'changed::panel-display', () => this._applyPanel(),
             'changed::temperature-position', () => this._applyPanel(),
-            'changed::use-colored-temps', () => this._rebuildMenu(),
-            'changed::use-colored-uv', () => this._rebuildMenu(),
-            'changed::show-uv-index', () => this._rebuildMenu(),
-            'changed::show-precipitation', () => this._rebuildMenu(),
-            'changed::clock-format', () => this._rebuildMenu(),
-            'changed::favorites', () => this._rebuildMenu(),
-            'changed::active-location', () => this._rebuildMenu(),
+            'changed::popup-view', () => this._onViewSetting(),
+            'changed::use-colored-temps', rebuild,
+            'changed::use-colored-uv', rebuild,
+            'changed::show-uv-index', rebuild,
+            'changed::show-precipitation', rebuild,
+            'changed::clock-format', rebuild,
+            'changed::favorites', rebuild,
+            'changed::active-location', rebuild,
             this);
-        this._interfaceSettings.connectObject(
-            'changed::clock-format', () => this._rebuildMenu(), this);
+        this._interfaceSettings.connectObject('changed::clock-format', rebuild, this);
+        // Temperature/UV colours differ between the dark and light shell styles.
+        St.Settings.get().connectObject('notify::color-scheme', rebuild, this);
 
         this._indicator = new PanelMenu.Button(0.5, this.metadata.name, false);
         this._indicator.menu.connectObject('open-state-changed', (_menu, open) => {
-            if (!open) {
+            if (open) {
+                this._manager?.refresh();
+                this._fillFooter();
+            } else {
                 this._hideTooltip();
-                return;
             }
-            this._manager?.refresh();
-            this._fadeIn(8);
         }, this);
 
         this._box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
-        this._icon = new St.Icon({
-            icon_name: 'weather-clear-symbolic',
-            style_class: 'system-status-icon',
-        });
+        this._icon = new St.Icon({icon_name: 'weather-clear-symbolic', style_class: 'system-status-icon'});
         this._label = new St.Label({
             text: '--°',
+            style_class: 'cw-panel-label',
             y_align: Clutter.ActorAlign.CENTER,
-            style: 'padding: 0 4px; font-weight: bold; font-size: 11px;',
         });
         this._indicator.add_child(this._box);
         this._applyPanel();
@@ -205,15 +126,21 @@ export default class WeatherExtension extends Extension {
 
         this._manager = new WeatherManager(this._settings);
         this._manager.connect('loading', () => {
-            if (!this._model) {
-                this._status = 'loading';
+            // Keep what's on screen (data, or an error/no-location message);
+            // the footer says "Updating…".
+            if (this._model || this._status !== 'loading')
+                this._fillFooter();
+            else
                 this._rebuildMenu();
-            }
         });
         this._manager.connect('updated', (_m, model) => this._onUpdated(model));
         this._manager.connect('error', () => {
             this._status = 'error';
-            this._rebuildMenu();
+            // With data on screen, only the footer changes (it shows the failure).
+            if (this._model)
+                this._fillFooter();
+            else
+                this._rebuildMenu();
         });
         this._manager.connect('no-location', () => {
             this._model = null;
@@ -229,20 +156,22 @@ export default class WeatherExtension extends Extension {
     disable() {
         this._manager?.destroy();
         this._manager = null;
-        this._clearFades();
         this._settings?.disconnectObject(this);
         this._settings = null;
         this._interfaceSettings?.disconnectObject(this);
         this._interfaceSettings = null;
+        St.Settings.get().disconnectObject(this);
         this._hideTooltip();
         this._indicator?.menu.disconnectObject(this);
-        // Destroys the menu, the box, icon and label with it.
+        // Destroys the menu and everything in it, and the panel box.
         this._indicator?.destroy();
         this._indicator = null;
         this._box = null;
         this._icon = null;
         this._label = null;
-        this._bgContainer = null;
+        this._tabs = null;
+        this._viewHolder = null;
+        this._footerBox = null;
         this._model = null;
     }
 
@@ -251,7 +180,7 @@ export default class WeatherExtension extends Extension {
         this._model = model;
         this._status = 'ok';
         if (moved) {
-            this._forecastPage = 0;
+            this._page = 0;
             this._activeDate = null;
         } else if (this._activeDate && !model.days.some(d => d.date === this._activeDate)) {
             this._activeDate = null;
@@ -262,6 +191,15 @@ export default class WeatherExtension extends Extension {
 
     _clockFormat() {
         return resolveClockFormat(this._settings.get_string('clock-format'), this._interfaceSettings);
+    }
+
+    _variant() {
+        return Main.getStyleVariant?.() === 'light' ? 'light' : 'dark';
+    }
+
+    _tempColor(t) {
+        return this._settings.get_boolean('use-colored-temps')
+            ? tempColor(t, this._model.units.temp, this._variant()) : null;
     }
 
     // ---- Panel ----
@@ -286,612 +224,593 @@ export default class WeatherExtension extends Extension {
         }
     }
 
-    // ---- Animations ----
-
-    _clearFades() {
-        if (this._fadeInId) {
-            GLib.Source.remove(this._fadeInId);
-            this._fadeInId = 0;
-        }
-        if (this._fadeOutId) {
-            GLib.Source.remove(this._fadeOutId);
-            this._fadeOutId = 0;
-        }
-    }
-
-    _fadeIn(steps) {
-        if (this._fadeInId) {
-            GLib.Source.remove(this._fadeInId);
-            this._fadeInId = 0;
-        }
-        if (!this._bgContainer)
-            return;
-        this._bgContainer.opacity = 0;
-        let step = 0;
-        this._fadeInId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 15, () => {
-            step++;
-            if (this._bgContainer)
-                this._bgContainer.opacity = Math.round((step / steps) * 255);
-            if (!this._bgContainer || step >= steps) {
-                this._fadeInId = 0;
-                return GLib.SOURCE_REMOVE;
-            }
-            return GLib.SOURCE_CONTINUE;
-        });
-    }
-
-    // Fade the current page out, then rebuild (which fades the new one in).
-    _fadeToPage() {
-        this._clearFades();
-        if (!this._bgContainer) {
-            this._rebuildMenu();
-            return;
-        }
-        const steps = 6;
-        let step = 0;
-        this._fadeOutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 15, () => {
-            step++;
-            if (this._bgContainer)
-                this._bgContainer.opacity = Math.round(255 * (1 - step / steps));
-            if (step < steps)
-                return GLib.SOURCE_CONTINUE;
-            this._fadeOutId = 0;
-            this._rebuildMenu();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    // ---- Popup ----
+    // ---- Popup skeleton ----
 
     _rebuildMenu() {
         if (!this._indicator)
             return;
         this._hideTooltip();
-        this._clearFades();
-        this._indicator.menu.removeAll();
-        this._bgContainer = null;
+        const menu = this._indicator.menu;
+        menu.removeAll();
+        this._tabs = null;
+        this._viewHolder = null;
 
-        if (!this._model) {
-            this._addStatusItems();
+        if (this._model) {
+            this._addLocationSwitcher();
+            this._addCurrent();
+            menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        }
+
+        const body = new St.BoxLayout({style_class: 'cw-content', x_expand: true, ...vertical()});
+        if (this._model) {
+            body.add_child(this._buildTabs());
+            this._viewHolder = new St.Bin({x_expand: true, x_align: Clutter.ActorAlign.FILL});
+            body.add_child(this._viewHolder);
+            this._fillView();
+        } else {
+            body.add_child(this._buildStatus());
+        }
+        menu.addMenuItem(this._contentItem(body));
+
+        this._footerBox = new St.BoxLayout({style_class: 'cw-footer', x_expand: true});
+        menu.addMenuItem(this._contentItem(this._footerBox));
+        this._fillFooter();
+    }
+
+    // A non-interactive menu item holding custom content.
+    _contentItem(child) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'cw-item'});
+        item.add_child(child);
+        return item;
+    }
+
+    _iconButton(icon, accessibleName, onClick) {
+        const button = new St.Button({
+            style_class: 'cw-icon-btn',
+            child: new St.Icon({icon_name: icon}),
+            accessible_name: accessibleName,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        button.connect('clicked', onClick);
+        return button;
+    }
+
+    // ---- Header ----
+
+    _addLocationSwitcher() {
+        const activeId = this._manager.activeId;
+        const switcher = new PopupMenu.PopupSubMenuMenuItem(displayName(this._model.location), true);
+        switcher.label.add_style_class_name('cw-location');
+        switcher.icon.icon_name = activeId === 'auto' ? 'find-location-symbolic' : 'starred-symbolic';
+
+        const auto = readAutoCache(this._settings);
+        const choices = [
+            {id: 'auto', label: auto ? `Current location (${displayName(auto.location)})` : 'Current location'},
+            ...this._manager.favorites.map(f => ({id: locationId(f), label: displayName(f)})),
+        ];
+        for (const choice of choices) {
+            const item = new PopupMenu.PopupMenuItem(choice.label);
+            item.setOrnament(choice.id === activeId ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+            item.connect('activate', () => this._settings.set_string('active-location', choice.id));
+            switcher.menu.addMenuItem(item);
+        }
+        switcher.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        switcher.menu.addAction('Add or edit locations…', () => this.openPreferences());
+        this._indicator.menu.addMenuItem(switcher);
+    }
+
+    _addCurrent() {
+        const {current, units, hours, days} = this._model;
+        const today = days.find(d => d.isToday) ?? days[0];
+        const now = hours[0];
+
+        const box = new St.BoxLayout({style_class: 'cw-current', x_expand: true});
+        box.add_child(new St.Icon({
+            icon_name: iconName(current.code, current.isDay),
+            style_class: 'cw-current-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        const temp = new St.Label({
+            text: `${current.temp}°`,
+            style_class: 'cw-current-temp',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        const color = this._tempColor(current.temp);
+        if (color)
+            temp.style = `color: ${color};`;
+        box.add_child(temp);
+
+        const text = new St.BoxLayout({style_class: 'cw-current-text', y_align: Clutter.ActorAlign.CENTER, ...vertical()});
+        text.add_child(new St.Label({text: weatherDesc(current.code), style_class: 'cw-current-desc'}));
+        const detail = [];
+        if (current.feels !== null)
+            detail.push(`Feels like ${current.feels}°`);
+        if (today)
+            detail.push(`H ${today.high}°  L ${today.low}°`);
+        text.add_child(new St.Label({text: detail.join('  ·  '), style_class: 'cw-current-detail cw-dim'}));
+        if (now) {
+            const extra = [`Rain ${now.precip}%`, `Wind ${now.wind} ${units.wind}`];
+            if (this._settings.get_boolean('show-uv-index') && now.isDay)
+                extra.push(`UV ${now.uv}`);
+            text.add_child(new St.Label({text: extra.join('  ·  '), style_class: 'cw-current-detail cw-dim'}));
+        }
+        box.add_child(text);
+
+        this._indicator.menu.addMenuItem(this._contentItem(box));
+    }
+
+    // ---- Tabs and view switching ----
+
+    _buildTabs() {
+        const tabs = new St.BoxLayout({style_class: 'cw-tabs', x_align: Clutter.ActorAlign.CENTER});
+        this._tabs = new Map();
+        for (const view of VIEWS) {
+            const tab = new St.Button({
+                label: view.label,
+                style_class: 'cw-tab',
+                can_focus: true,
+                track_hover: true,
+                checked: view.id === this._view,
+            });
+            tab.connect('clicked', () => this._settings.set_string('popup-view', view.id));
+            tabs.add_child(tab);
+            this._tabs.set(view.id, tab);
+        }
+        return tabs;
+    }
+
+    _onViewSetting() {
+        const view = this._settings.get_string('popup-view');
+        if (view === this._view)
+            return;
+        const hoursPerPage = PAGE_HOURS[view];
+        const oldHoursPerPage = PAGE_HOURS[this._view];
+        if (hoursPerPage && oldHoursPerPage)
+            this._page = Math.floor(this._page * oldHoursPerPage / hoursPerPage);
+        else
+            this._page = 0;
+        this._view = view;
+        if (view !== 'daily')
+            this._hourView = view;
+        for (const [id, tab] of this._tabs ?? [])
+            tab.checked = id === view;
+        this._transition();
+    }
+
+    // Apply `change` to the view state, then cross-fade the view area (and the
+    // footer's pager) to it. State changes immediately, so a transition that
+    // interrupts another never loses the first one's change.
+    _transition(change = null) {
+        change?.();
+        const old = this._viewHolder?.get_child();
+        if (!old) {
+            this._fillView();
+            this._fillFooter();
             return;
         }
-        if (this._viewMode === 'daily')
-            this._buildDaily();
+        this._hideTooltip();
+        old.remove_all_transitions();
+        old.ease({
+            opacity: 0,
+            duration: FADE_OUT_MS,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => {
+                this._fillView();
+                this._fillFooter();
+                const next = this._viewHolder?.get_child();
+                if (!next)
+                    return;
+                next.opacity = 0;
+                next.ease({opacity: 255, duration: FADE_IN_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            },
+        });
+    }
+
+    // Open the hourly table or chart (whichever was used last) for one day.
+    _showDay(date) {
+        this._activeDate = date;
+        this._settings.set_string('popup-view', this._hourView);
+    }
+
+    // Hours for the hourly/chart views, honouring the day filter.
+    _viewHours() {
+        const hours = this._model.hours;
+        return this._activeDate ? hours.filter(h => h.date === this._activeDate) : hours;
+    }
+
+    _pageCount() {
+        if (this._view === 'daily' || this._activeDate && this._view === 'chart')
+            return 1;
+        return Math.max(1, Math.ceil(this._viewHours().length / PAGE_HOURS[this._view]));
+    }
+
+    _setPage(page) {
+        if (page < 0 || page >= this._pageCount() || page === this._page)
+            return;
+        this._transition(() => {
+            this._page = page;
+        });
+    }
+
+    _fillView() {
+        if (!this._viewHolder || !this._model)
+            return;
+        this._page = Math.min(this._page, this._pageCount() - 1);
+        const box = new St.BoxLayout({x_expand: true, ...vertical()});
+        if (this._view === 'daily')
+            this._buildDaily(box);
+        else if (this._view === 'chart')
+            this._buildChartView(box);
         else
-            this._buildHourly();
-        this._fadeIn(6);
+            this._buildHourly(box);
+        this._viewHolder.set_child(box);
     }
 
-    _addStatusItems() {
-        const menu = this._indicator.menu;
-        const message = {
-            'loading': 'Loading weather…',
-            'error': 'Couldn’t load the weather',
-            'no-location': 'No location available',
-        }[this._status];
-        const item = new PopupMenu.PopupMenuItem(message, {reactive: false});
-        menu.addMenuItem(item);
-
-        if (this._status === 'error') {
-            const detail = this._manager?.lastError?.message;
-            if (detail) {
-                const d = new PopupMenu.PopupMenuItem(detail, {reactive: false});
-                d.label.style = 'font-size: 10px; color: #999;';
-                menu.addMenuItem(d);
-            }
-            menu.addAction('Retry', () => this._manager?.refresh({force: true}));
-        }
-        if (this._status === 'no-location' || this._status === 'error')
-            menu.addAction('Choose a location…', () => this.openPreferences());
+    _dayName(date, long = true) {
+        if (date === this._model.today)
+            return 'Today';
+        return formatWeekday(date, long);
     }
 
-    // Location name, doubling as a switcher when favourites exist.
-    _addHeader(subtitle) {
-        const menu = this._indicator.menu;
-        const name = displayName(this._model.location);
-        const favorites = this._manager.favorites;
-        const nameStyle = 'font-size: 18px; font-weight: bold; padding: 4px 0 0 0;';
-
-        if (favorites.length === 0) {
-            const locItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-            locItem.add_child(new St.Label({
-                text: name,
-                style: `${nameStyle} color: #fff;`,
-                x_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
+    _addSubtitle(box, text) {
+        const row = new St.BoxLayout({style_class: 'cw-subtitle-box', x_align: Clutter.ActorAlign.CENTER});
+        row.add_child(new St.Label({text, style_class: 'cw-subtitle', y_align: Clutter.ActorAlign.CENTER}));
+        if (this._activeDate && this._view !== 'daily') {
+            const chip = new St.Button({
+                label: '✕ All days',
+                style_class: 'cw-chip',
+                can_focus: true,
+                track_hover: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            chip.connect('clicked', () => this._transition(() => {
+                // Stay near the chosen day in the unfiltered list.
+                const first = this._model.hours.findIndex(h => h.date === this._activeDate);
+                this._activeDate = null;
+                this._page = Math.max(0, Math.floor(first / PAGE_HOURS[this._view]));
             }));
-            menu.addMenuItem(locItem);
-        } else {
-            const switcher = new PopupMenu.PopupSubMenuMenuItem(name);
-            switcher.label.style = nameStyle;
-            const activeId = this._manager.activeId;
-            const auto = readAutoCache(this._settings);
-            const choices = [
-                {id: 'auto', label: auto ? `Current location (${displayName(auto.location)})` : 'Current location'},
-                ...favorites.map(f => ({id: locationId(f), label: displayName(f)})),
-            ];
-            for (const choice of choices) {
-                const item = new PopupMenu.PopupMenuItem(choice.label);
-                item.setOrnament(choice.id === activeId
-                    ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-                item.connect('activate', () => this._settings.set_string('active-location', choice.id));
-                switcher.menu.addMenuItem(item);
-            }
-            menu.addMenuItem(switcher);
+            row.add_child(chip);
         }
-
-        const subItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-        subItem.add_child(new St.Label({
-            text: subtitle,
-            style: 'font-size: 10px; color: #bbb; padding: 0 0 4px 0;',
-            x_align: Clutter.ActorAlign.CENTER,
-            x_expand: true,
-        }));
-        menu.addMenuItem(subItem);
+        box.add_child(row);
     }
 
-    _dayName(date) {
-        return date === this._model.today ? 'Today' : formatWeekday(date, true);
-    }
+    // ---- Views ----
 
-    _navButton(label, onClick, props = {}) {
-        const button = new St.Button({
-            label,
-            can_focus: true,
-            track_hover: true,
-            style_class: 'weather-nav-btn',
-            ...props,
-        });
-        button.connect('clicked', onClick);
-        return button;
-    }
-
-    _iconButton(iconNameStr, onClick) {
-        const button = new St.Button({
-            child: new St.Icon({icon_name: iconNameStr, style: 'icon-size: 14px;'}),
-            can_focus: true,
-            track_hover: true,
-            style: 'padding: 2px 8px; border-radius: 4px;',
-        });
-        button.connect('clicked', onClick);
-        return button;
-    }
-
-    _attachContainer(bgContainer) {
-        this._bgContainer = bgContainer;
-        const bgItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-        bgItem.add_child(bgContainer);
-        this._indicator.menu.addMenuItem(bgItem);
-    }
-
-    _buildHourly() {
+    _buildHourly(box) {
         const model = this._model;
         const fmt = this._clockFormat();
-        const unit = model.units.temp;
+        const variant = this._variant();
         const showUv = this._settings.get_boolean('show-uv-index');
         const showPrecip = this._settings.get_boolean('show-precipitation');
-        const coloredTemps = this._settings.get_boolean('use-colored-temps');
         const coloredUv = this._settings.get_boolean('use-colored-uv');
 
-        const forecast = this._activeDate
-            ? model.hours.filter(h => h.date === this._activeDate)
-            : model.hours;
-        const maxPage = Math.max(0, Math.ceil(forecast.length / PER_PAGE) - 1);
-        this._forecastPage = Math.min(this._forecastPage, maxPage);
-        const pageItems = forecast.slice(this._forecastPage * PER_PAGE, (this._forecastPage + 1) * PER_PAGE);
+        const hours = this._viewHours()
+            .slice(this._page * ROWS_PER_PAGE, (this._page + 1) * ROWS_PER_PAGE);
+        const dates = [...new Set(hours.map(h => h.date))];
+        this._addSubtitle(box, dates.map(d => this._dayName(d)).join(' & '));
 
-        const dates = [...new Set(pageItems.map(h => h.date))];
-        this._addHeader(`${dates.map(d => this._dayName(d)).join(' & ')} — Hourly`);
-
-        const bgContainer = new St.BoxLayout({style_class: 'weather-bg-box', vertical: true, opacity: 0});
-
-        pageItems.forEach((h, i) => {
-            const row = new St.BoxLayout({
-                x_expand: true,
-                style: `padding: 3px 8px; spacing: 4px;${i % 2 === 0 ? ' background-color: rgba(255,255,255,0.04);' : ''}`,
-            });
+        hours.forEach((h, i) => {
+            const row = new St.BoxLayout({style_class: 'cw-row', x_expand: true});
+            if (i % 2 === 0)
+                row.add_style_class_name('cw-row-alt');
 
             row.add_child(new St.Label({
                 text: h === model.hours[0] ? 'Now' : formatHour(h.time, fmt),
-                style: 'font-size: 12px; font-weight: bold; min-width: 44px; color: #eee;',
+                style_class: 'cw-hour-time',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             row.add_child(new St.Icon({
                 icon_name: iconName(h.code, h.isDay),
-                style: 'icon-size: 16px; min-width: 20px;',
+                style_class: 'cw-row-icon',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-
             if (showPrecip) {
                 row.add_child(new St.Label({
                     text: `${h.precip}%`,
-                    style: `font-size: 10px; color: ${PRECIP_COLOR}; min-width: 26px;`,
+                    style_class: 'cw-precip',
                     y_align: Clutter.ActorAlign.CENTER,
                 }));
             }
-
             if (showUv) {
                 if (h.isDay) {
-                    const color = coloredUv ? uvStyle(h.uv).color : '#aaa';
-                    row.add_child(new St.Label({
+                    const uv = new St.Label({
                         text: `UV ${h.uv}`,
-                        style: `font-size: 10px; color: ${color}; min-width: 30px;`,
+                        style_class: 'cw-uv',
                         y_align: Clutter.ActorAlign.CENTER,
-                    }));
+                    });
+                    if (coloredUv)
+                        uv.style = `color: ${uvStyle(h.uv, variant).color};`;
+                    else
+                        uv.add_style_class_name('cw-dim');
+                    row.add_child(uv);
                 } else {
-                    row.add_child(new St.Icon({
-                        icon_name: 'weather-clear-night-symbolic',
-                        style: 'icon-size: 12px; min-width: 30px; color: #aaa;',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }));
+                    // No UV at night; keep the column aligned.
+                    row.add_child(new St.Widget({style_class: 'cw-uv'}));
                 }
             }
-
-            const cond = WEATHER_SHORT[h.code];
-            if (cond) {
-                row.add_child(new St.Label({
-                    text: cond,
-                    style: 'font-size: 10px; color: #999; min-width: 60px;',
-                    y_align: Clutter.ActorAlign.CENTER,
-                }));
-            }
-
-            row.add_child(new St.Bin({x_expand: true}));
-
-            const color = coloredTemps ? tempColor(h.temp, unit) : '#eee';
             row.add_child(new St.Label({
-                text: `${h.temp}°`,
-                style: `font-size: 12px; font-weight: bold; color: ${color};`,
+                text: weatherDesc(h.code),
+                style_class: 'cw-cond',
+                x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-
-            row.reactive = true;
-            row.track_hover = true;
-            row.connect('enter-event', () => {
-                row.opacity = 180;
+            const temp = new St.Label({
+                text: `${h.temp}°`,
+                style_class: 'cw-temp',
+                y_align: Clutter.ActorAlign.CENTER,
             });
-            row.connect('leave-event', () => {
-                row.opacity = 255;
-            });
-
-            const rowItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-            rowItem.add_child(row);
-            bgContainer.add_child(rowItem);
+            const color = this._tempColor(h.temp);
+            if (color)
+                temp.style = `color: ${color};`;
+            row.add_child(temp);
+            box.add_child(row);
         });
-
-        const navRow = new St.BoxLayout({
-            x_expand: true,
-            x_align: Clutter.ActorAlign.FILL,
-            style: 'padding: 4px 6px 2px 6px;',
-        });
-        const refreshBtn = this._navButton('↻', () => {
-            this._activeDate = null;
-            this._manager.refresh({force: true});
-        }, {x_align: Clutter.ActorAlign.START});
-
-        const centerBox = new St.BoxLayout({
-            x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            style: 'spacing: 16px;',
-        });
-        centerBox.add_child(this._navButton('◀', () => {
-            if (this._forecastPage > 0) {
-                this._forecastPage--;
-                this._fadeToPage();
-            }
-        }));
-        centerBox.add_child(new St.Label({
-            text: `${this._forecastPage + 1}/${maxPage + 1}`,
-            y_align: Clutter.ActorAlign.CENTER,
-            style: 'font-size: 11px;',
-        }));
-        centerBox.add_child(this._navButton('▶', () => {
-            if (this._forecastPage < maxPage) {
-                this._forecastPage++;
-                this._fadeToPage();
-            }
-        }));
-
-        const prefsBtn = this._navButton('⚙', () => this.openPreferences(),
-            {x_align: Clutter.ActorAlign.END});
-
-        navRow.add_child(refreshBtn);
-        navRow.add_child(centerBox);
-        navRow.add_child(prefsBtn);
-
-        const toggleRow = new St.BoxLayout({
-            x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            style: 'padding: 0px 6px 4px 6px;',
-        });
-        toggleRow.add_child(this._iconButton('x-office-calendar-symbolic', () => {
-            this._activeDate = null;
-            this._viewMode = 'daily';
-            this._fadeToPage();
-        }));
-
-        const bottomBox = new St.BoxLayout({vertical: true, x_expand: true});
-        bottomBox.add_child(navRow);
-        bottomBox.add_child(toggleRow);
-
-        const navItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-        navItem.add_child(bottomBox);
-        bgContainer.add_child(new PopupMenu.PopupSeparatorMenuItem());
-        bgContainer.add_child(navItem);
-
-        this._attachContainer(bgContainer);
-        this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     }
 
-    _buildDaily() {
+    _buildChartView(box) {
+        const model = this._model;
+        const slots = new Array(SLOTS).fill(null);
+        if (this._activeDate) {
+            // One calendar day, each hour in its own slot (past hours stay empty).
+            for (const h of this._viewHours())
+                slots[h.hour] = h;
+        } else {
+            this._viewHours()
+                .slice(this._page * SLOTS, (this._page + 1) * SLOTS)
+                .forEach((h, i) => {
+                    slots[i] = h;
+                });
+        }
+        const dates = [...new Set(slots.filter(Boolean).map(h => h.date))];
+        this._addSubtitle(box, dates.map(d => this._dayName(d)).join(' & '));
+        if (dates.length === 0)
+            return;
+
+        box.add_child(buildChart({
+            slots,
+            units: model.units,
+            nowTime: model.hours[0]?.time,
+            clockFormat: this._clockFormat(),
+            colored: this._settings.get_boolean('use-colored-temps'),
+            showUv: this._settings.get_boolean('show-uv-index'),
+            variant: this._variant(),
+        }));
+    }
+
+    _buildDaily(box) {
         const model = this._model;
         const days = model.days;
-        const unit = model.units.temp;
-        const coloredTemps = this._settings.get_boolean('use-colored-temps');
-
-        let subtitle = '7-Day Forecast';
         if (days.length >= 2)
-            subtitle = `${formatShortDate(days[0].date)} — ${formatShortDate(days[days.length - 1].date)}`;
-        this._addHeader(subtitle);
-
+            this._addSubtitle(box, `${formatShortDate(days[0].date)} – ${formatShortDate(days[days.length - 1].date)}`);
         if (days.length === 0)
             return;
 
         const weekMin = Math.min(...days.map(d => d.low));
         const weekMax = Math.max(...days.map(d => d.high));
         const weekRange = weekMax - weekMin || 1;
-        const barTotalPx = 100;
-        const colorFor = t => (coloredTemps ? tempColor(t, unit) : '#bbb');
-
-        const bgContainer = new St.BoxLayout({style_class: 'weather-bg-box', vertical: true, opacity: 0});
 
         days.forEach((day, i) => {
-            const row = new St.BoxLayout({
-                x_expand: true,
-                style: `padding: 4px 10px; spacing: 6px;${i % 2 === 0 ? ' background-color: rgba(255,255,255,0.04);' : ''}`,
-            });
+            const row = new St.BoxLayout({style_class: 'cw-day-box', x_expand: true});
+            row.add_child(new St.Label({
+                text: this._dayName(day.date, false),
+                style_class: 'cw-day-name',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+
+            const icons = new St.BoxLayout({style_class: 'cw-day-icons', y_align: Clutter.ActorAlign.CENTER});
+            icons.add_child(new St.Icon({icon_name: iconName(day.code), style_class: 'cw-row-icon'}));
+            if (day.code2 !== null && iconName(day.code2) !== iconName(day.code)) {
+                icons.add_child(new St.Icon({
+                    icon_name: iconName(day.code2),
+                    style_class: 'cw-day-icon2 cw-dim',
+                    y_align: Clutter.ActorAlign.END,
+                }));
+            }
+            row.add_child(icons);
 
             row.add_child(new St.Label({
-                text: day.isToday ? 'Today' : formatWeekday(day.date),
-                style: 'font-size: 12px; font-weight: bold; min-width: 36px; color: #eee;',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            row.add_child(new St.Icon({
-                icon_name: iconName(day.code, true),
-                style: 'icon-size: 16px; min-width: 20px;',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            row.add_child(new St.Label({
                 text: `${day.precip}%`,
-                style: `font-size: 10px; color: ${PRECIP_COLOR}; min-width: 26px;`,
+                style_class: 'cw-precip',
+                x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             row.add_child(new St.Label({
                 text: `${day.low}°`,
-                style: 'font-size: 11px; color: #999; min-width: 24px;',
-                x_align: Clutter.ActorAlign.END,
+                style_class: 'cw-low',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-
-            // Low→high bar positioned within the week's range, with a colour gradient.
-            const loPct = ((day.low - weekMin) / weekRange) * 100;
-            const hiPct = ((day.high - weekMin) / weekRange) * 100;
-            const leftPad = Math.max(0, Math.round(loPct / 100 * barTotalPx));
-            const rightPad = Math.max(0, barTotalPx - leftPad - Math.max(Math.round((hiPct - loPct) / 100 * barTotalPx), 6));
-
-            const track = new St.BoxLayout({
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-                style: 'min-height: 4px; border-radius: 2px; background-color: rgba(255,255,255,0.12);',
-            });
-            if (leftPad > 0)
-                track.add_child(new St.Bin({style: `min-width: ${leftPad}px;`}));
-
-            const lowColor = colorFor(day.low);
-            const highColor = colorFor(day.high);
-            const channel = (hex, n) => parseInt(hex.slice(1 + n * 2, 3 + n * 2), 16);
-            const segments = 8;
-            const totalBarPx = barTotalPx - leftPad - rightPad;
-            const segW = Math.max(Math.round(totalBarPx / segments), 2);
-            for (let s = 0; s < segments; s++) {
-                const t = s / (segments - 1);
-                const [r, g, b] = [0, 1, 2].map(n =>
-                    Math.round(channel(lowColor, n) + (channel(highColor, n) - channel(lowColor, n)) * t));
-                const w = s < segments - 1 ? segW : Math.max(totalBarPx - segW * (segments - 1), 2);
-                const radius = s === 0 ? ' border-radius: 2px 0 0 2px;'
-                    : s === segments - 1 ? ' border-radius: 0 2px 2px 0;' : '';
-                track.add_child(new St.Bin({
-                    style: `min-width: ${w}px; min-height: 4px; background-color: rgb(${r},${g},${b});${radius}`,
-                }));
-            }
-            if (rightPad > 0)
-                track.add_child(new St.Bin({style: `min-width: ${rightPad}px;`}));
-            row.add_child(track);
-
+            row.add_child(this._rangeBar(day, weekMin, weekRange));
             row.add_child(new St.Label({
                 text: `${day.high}°`,
-                style: 'font-size: 11px; font-weight: bold; color: #eee; min-width: 24px;',
+                style_class: 'cw-high',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
 
-            row.reactive = true;
-            row.track_hover = true;
-            row.connect('enter-event', () => {
-                row.opacity = 180;
-                this._showTooltip(row, day);
+            const button = new St.Button({
+                child: row,
+                style_class: 'cw-day',
+                can_focus: true,
+                track_hover: true,
+                x_expand: true,
+                accessible_name: `${this._dayName(day.date)}: ${weatherDesc(day.code)}, ${day.low}° to ${day.high}°`,
             });
-            row.connect('leave-event', () => {
-                row.opacity = 255;
-                this._hideTooltip();
+            if (i % 2 === 0)
+                button.add_style_class_name('cw-row-alt');
+            button.connect('clicked', () => this._showDay(day.date));
+            // Details on hover, and on keyboard focus.
+            button.connect('notify::hover', () => {
+                if (button.hover)
+                    this._showTooltip(button, day);
+                else if (!button.has_key_focus())
+                    this._hideTooltip();
             });
-            row.connect('button-release-event', () => {
-                this._activeDate = day.date;
-                this._forecastPage = 0;
-                this._viewMode = 'hourly';
-                this._fadeToPage();
-                return Clutter.EVENT_STOP;
-            });
-
-            const rowItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-            rowItem.add_child(row);
-            bgContainer.add_child(rowItem);
+            button.connect('key-focus-in', () => this._showTooltip(button, day));
+            button.connect('key-focus-out', () => this._hideTooltip());
+            box.add_child(button);
         });
+    }
 
-        const toggleRow = new St.BoxLayout({
-            x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            style: 'padding: 2px 6px 4px 6px;',
+    // Low→high bar placed within the week's temperature range.
+    _rangeBar(day, weekMin, weekRange) {
+        const left = Math.round((day.low - weekMin) / weekRange * RANGE_BAR_PX);
+        const width = Math.max(6, Math.round((day.high - day.low) / weekRange * RANGE_BAR_PX));
+        const track = new St.BoxLayout({
+            style_class: 'cw-range-track',
+            style: `width: ${RANGE_BAR_PX}px;`,
+            y_align: Clutter.ActorAlign.CENTER,
         });
-        toggleRow.add_child(this._iconButton('preferences-system-time-symbolic', () => {
-            this._activeDate = null;
-            this._forecastPage = 0;
-            this._viewMode = 'hourly';
-            this._fadeToPage();
+        track.add_child(new St.Widget({style: `width: ${Math.min(left, RANGE_BAR_PX - width)}px;`}));
+        const bar = new St.Widget({style_class: 'cw-range-bar'});
+        const lo = this._tempColor(day.low);
+        const hi = this._tempColor(day.high);
+        bar.style = lo
+            ? `width: ${width}px; background-gradient-direction: horizontal; ` +
+              `background-gradient-start: ${lo}; background-gradient-end: ${hi};`
+            : `width: ${width}px;`;
+        if (!lo)
+            bar.add_style_class_name('cw-range-bar-plain');
+        track.add_child(bar);
+        return track;
+    }
+
+    // ---- Status (no data) ----
+
+    _buildStatus() {
+        const box = new St.BoxLayout({style_class: 'cw-status', x_expand: true, ...vertical()});
+        const title = {
+            'loading': 'Loading weather…',
+            'error': 'Couldn’t load the weather',
+            'no-location': 'No location available',
+        }[this._status];
+        box.add_child(new St.Label({text: title, style_class: 'cw-status-title', x_align: Clutter.ActorAlign.CENTER}));
+
+        let detail = null;
+        if (this._status === 'error')
+            detail = this._manager?.lastError?.message;
+        else if (this._status === 'no-location')
+            detail = 'Turn on Location Services, allow IP lookup, or add a location.';
+        if (detail) {
+            const label = new St.Label({text: detail, style_class: 'cw-status-detail', x_align: Clutter.ActorAlign.CENTER});
+            label.clutter_text.line_wrap = true;
+            box.add_child(label);
+        }
+
+        const buttons = new St.BoxLayout({style_class: 'cw-status-buttons', x_align: Clutter.ActorAlign.CENTER});
+        const addButton = (text, onClick) => {
+            const button = new St.Button({label: text, style_class: 'button', can_focus: true, track_hover: true});
+            button.connect('clicked', onClick);
+            buttons.add_child(button);
+        };
+        if (this._status === 'error')
+            addButton('Retry', () => this._manager?.refresh({force: true}));
+        if (this._status !== 'loading') {
+            addButton('Choose a location…', () => {
+                this._indicator.menu.close();
+                this.openPreferences();
+            });
+        }
+        if (buttons.get_n_children() > 0)
+            box.add_child(buttons);
+        return box;
+    }
+
+    // ---- Footer ----
+
+    _fillFooter() {
+        if (!this._footerBox)
+            return;
+        this._footerBox.destroy_all_children();
+
+        this._footerBox.add_child(this._iconButton('view-refresh-symbolic', 'Refresh', () => {
+            this._manager?.refresh({force: true});
         }));
-        const toggleItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-        toggleItem.add_child(toggleRow);
-        bgContainer.add_child(new PopupMenu.PopupSeparatorMenuItem());
-        bgContainer.add_child(toggleItem);
 
-        this._attachContainer(bgContainer);
+        const status = new St.Label({
+            text: this._updatedText(),
+            style_class: 'cw-updated',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        if (this._model && !this._manager?.busy && (this._manager?.lastError || this._manager?.isStale()))
+            status.add_style_class_name('cw-stale');
+        this._footerBox.add_child(status);
+
+        if (this._model && this._view !== 'daily') {
+            const count = this._pageCount();
+            if (count > 1) {
+                const prev = this._iconButton('go-previous-symbolic', 'Previous page', () => this._setPage(this._page - 1));
+                const next = this._iconButton('go-next-symbolic', 'Next page', () => this._setPage(this._page + 1));
+                for (const [button, enabled] of [[prev, this._page > 0], [next, this._page < count - 1]]) {
+                    button.reactive = enabled;
+                    button.can_focus = enabled;
+                    button.opacity = enabled ? 255 : 90;
+                }
+                this._footerBox.add_child(prev);
+                this._footerBox.add_child(new St.Label({
+                    text: `${this._page + 1}/${count}`,
+                    style_class: 'cw-page',
+                    y_align: Clutter.ActorAlign.CENTER,
+                }));
+                this._footerBox.add_child(next);
+            }
+        }
+
+        this._footerBox.add_child(this._iconButton('emblem-system-symbolic', 'Preferences', () => {
+            this._indicator.menu.close();
+            this.openPreferences();
+        }));
     }
 
-    // ---- Daily tooltip ----
-
-    _daySummary(day) {
-        const {temp: unit, wind: windUnit} = this._model.units;
-        let s = weatherDesc(day.code);
-        if (day.precip > 20)
-            s += `. ${day.precip}% chance of rain`;
-        else if (day.precip > 0)
-            s += ` with a ${day.precip}% chance of rain`;
-        if (windLabel(day.windMax, windUnit) !== 'Calm' && windLabel(day.windMax, windUnit) !== 'Light')
-            s += `. ${windLabel(day.windMax, windUnit)} winds ${windDir(day.windDir)} ${day.windMax} ${windUnit}`;
-        s += `. High ${day.high}${unit}, low ${day.low}${unit}`;
-        return s;
+    _updatedText() {
+        const manager = this._manager;
+        if (manager?.busy)
+            return 'Updating…';
+        if (!this._model)
+            return '';
+        const time = formatUnixClock(this._model.fetchedAt, this._clockFormat());
+        if (manager?.lastError) {
+            const offline = !Gio.NetworkMonitor.get_default().network_available;
+            return `${offline ? 'Offline' : 'Update failed'} · data from ${time}`;
+        }
+        return `Updated ${time}`;
     }
+
+    // ---- Day tooltip ----
 
     _hideTooltip() {
         this._tooltip?.destroy();
         this._tooltip = null;
     }
 
-    _showTooltip(row, day) {
+    _showTooltip(anchor, day) {
         this._hideTooltip();
-        const {temp: unit, wind: windUnit} = this._model.units;
-        const fmt = this._clockFormat();
+        if (!this._model)
+            return;
         const hours = this._model.hours.filter(h => h.date === day.date);
-        const avg = key => Math.round(hours.reduce((s, h) => s + h[key], 0) / hours.length);
-        const max = key => Math.max(...hours.map(h => h[key]));
-
-        const periodStats = ph => {
-            if (ph.length === 0)
-                return null;
-            const codes = {};
-            for (const h of ph)
-                codes[h.code] = (codes[h.code] || 0) + 1;
-            const dominant = parseInt(Object.entries(codes).sort((a, b) => b[1] - a[1])[0][0]);
-            return {
-                temp: Math.round(ph.reduce((s, h) => s + h.temp, 0) / ph.length),
-                precip: Math.max(...ph.map(h => h.precip)),
-                code: dominant,
-                isDay: ph[0].isDay,
-            };
-        };
-
-        const box = new St.BoxLayout({
-            vertical: true,
-            style: 'padding: 10px 12px; border-radius: 8px; background-color: rgba(30, 30, 30, 0.95); border: 1px solid rgba(255,255,255,0.15); spacing: 3px; width: 220px;',
+        const box = buildDayTooltip(day, hours, this._model.units, {
+            clockFormat: this._clockFormat(),
+            variant: this._variant(),
+            coloredUv: this._settings.get_boolean('use-colored-uv'),
         });
-
-        const topRow = new St.BoxLayout({style: 'spacing: 8px; padding: 0 0 2px 0;'});
-        topRow.add_child(new St.Icon({
-            icon_name: iconName(day.code, true),
-            style: 'icon-size: 28px; color: #eee;',
-        }));
-        topRow.add_child(new St.Label({
-            text: weatherDesc(day.code),
-            style: 'font-size: 14px; font-weight: bold; color: #fff;',
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
-        box.add_child(topRow);
-
-        const summaryLabel = new St.Label({
-            text: this._daySummary(day),
-            style: 'font-size: 11px; color: #bbb; padding: 0 0 6px 0;',
-            x_expand: true,
-        });
-        summaryLabel.clutter_text.line_wrap = true;
-        summaryLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD;
-        box.add_child(summaryLabel);
-
-        const hiloRow = new St.BoxLayout({style: 'spacing: 12px; padding: 2px 0;'});
-        hiloRow.add_child(new St.Label({text: `H: ${day.high}${unit}`, style: 'font-size: 12px; font-weight: bold; color: #eee;'}));
-        hiloRow.add_child(new St.Label({text: `L: ${day.low}${unit}`, style: 'font-size: 12px; color: #999;'}));
-        if (hours.length > 0)
-            hiloRow.add_child(new St.Label({text: `Feels ${avg('feels')}${unit}`, style: 'font-size: 12px; color: #aaa;'}));
-        box.add_child(hiloRow);
-
-        box.add_child(new St.Label({text: ' ', style: 'font-size: 2px;'}));
-
-        const detailRow = (label, value, color = '#aaa') => {
-            const r = new St.BoxLayout({style: 'spacing: 4px;'});
-            r.add_child(new St.Label({text: label, style: 'font-size: 11px; color: #777; min-width: 72px;'}));
-            r.add_child(new St.Label({text: value, style: `font-size: 11px; color: ${color};`}));
-            return r;
-        };
-
-        if (hours.length > 0) {
-            box.add_child(detailRow('Humidity', `${avg('humidity')}%`));
-            const maxUv = max('uv');
-            if (maxUv > 0) {
-                const uv = uvStyle(maxUv);
-                box.add_child(detailRow('UV Index', `${maxUv} ${uv.label}`, uv.color));
-            }
-            box.add_child(detailRow('Wind', `${max('wind')} ${windUnit}`));
-        }
-        box.add_child(detailRow('Precip', `${day.precip}%`, PRECIP_COLOR));
-        if (day.sunrise && day.sunset)
-            box.add_child(detailRow('Daylight', `${formatClock(day.sunrise, fmt)}–${formatClock(day.sunset, fmt)}`, '#888'));
-
-        box.add_child(new St.Label({text: ' ', style: 'font-size: 4px;'}));
-
-        const periods = [
-            {label: 'Morning', stats: periodStats(hours.filter(h => h.hour >= 6 && h.hour < 12))},
-            {label: 'Afternoon', stats: periodStats(hours.filter(h => h.hour >= 12 && h.hour < 18))},
-            {label: 'Evening', stats: periodStats(hours.filter(h => h.hour >= 18 && h.hour < 21))},
-            {label: 'Night', stats: periodStats(hours.filter(h => h.hour >= 21 || h.hour < 6))},
-        ].filter(p => p.stats);
-        for (const p of periods) {
-            const pr = new St.BoxLayout({style: 'spacing: 4px;'});
-            pr.add_child(new St.Icon({
-                icon_name: iconName(p.stats.code, p.stats.isDay),
-                style: 'icon-size: 14px; min-width: 18px; color: #ccc;',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            pr.add_child(new St.Label({text: p.label, style: 'font-size: 11px; font-weight: bold; color: #ddd; min-width: 68px;'}));
-            pr.add_child(new St.Label({text: `${p.stats.temp}${unit}`, style: 'font-size: 11px; color: #eee;'}));
-            pr.add_child(new St.Label({text: `${p.stats.precip}%`, style: `font-size: 10px; color: ${PRECIP_COLOR};`}));
-            box.add_child(pr);
-        }
-
         Main.uiGroup.add_child(box);
         this._tooltip = box;
 
         // Not allocated yet, so measure with preferred sizes.
         const [, tipW] = box.get_preferred_width(-1);
         const [, tipH] = box.get_preferred_height(tipW);
-        const [, rowY] = row.get_transformed_position();
-        const [, rowH] = row.get_transformed_size();
+        const [, rowY] = anchor.get_transformed_position();
+        const [, rowH] = anchor.get_transformed_size();
         const [menuX] = this._indicator.menu.actor.get_transformed_position();
         const [menuW] = this._indicator.menu.actor.get_transformed_size();
-        const stageW = global.stage.width;
-        const stageH = global.stage.height;
         if (![rowY, rowH, menuX, menuW].every(Number.isFinite)) {
             // Row not laid out yet (e.g. hovered during a rebuild).
             this._hideTooltip();
             return;
         }
+        const stageW = global.stage.width;
+        const stageH = global.stage.height;
 
         let tipX;
         if (stageW - (menuX + menuW) >= tipW + 8)

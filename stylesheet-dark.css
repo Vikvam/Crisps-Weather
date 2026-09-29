@@ -1,0 +1,4 @@
+/* Crisps Weather: dark shell style (GNOME 47+). Having a -dark variant makes
+ * the shell reload our stylesheet when the colour scheme changes. */
+
+@import url("stylesheet.css");
