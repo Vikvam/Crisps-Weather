@@ -39,26 +39,28 @@
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {iconName, tempColor, uvStyle, weatherDesc} from './lib/conditions.js';
+import {
+    aqiStyle, formatAmount, iconName, tempColor, uvStyle, weatherDesc, windArrow,
+} from './lib/conditions.js';
 import {displayName, locationId, readAutoCache} from './lib/location.js';
 import {
-    createInterfaceSettings, formatHour, formatShortDate, formatUnixClock,
+    createInterfaceSettings, formatClock, formatHour, formatShortDate, formatUnixClock,
     formatWeekday, resolveClockFormat,
 } from './lib/timeFormat.js';
 import {WeatherManager} from './lib/weatherManager.js';
 import {SLOTS, buildChart, vertical} from './ui/chart.js';
 import {buildDayTooltip} from './ui/dayTooltip.js';
 
-const ROWS_PER_PAGE = 8;
 const FADE_OUT_MS = 80;
 const FADE_IN_MS = 140;
-const RANGE_BAR_PX = 100;
+const RANGE_BAR_EM = 8; // matches .cw-range-track width
 
 const VIEWS = [
     {id: 'hourly', label: 'Hourly'},
@@ -66,16 +68,12 @@ const VIEWS = [
     {id: 'daily', label: 'Daily'},
 ];
 
-// Hours shown per page, used to keep roughly the same time in view when switching.
-const PAGE_HOURS = {hourly: ROWS_PER_PAGE, chart: SLOTS};
-
 // Extension lifecycle: enable() creates everything, disable() must destroy/disconnect all.
 export default class CrispsWeatherExtension extends Extension {
     enable() {
         this._model = null;
         this._status = 'loading'; // 'loading' | 'ok' | 'error' | 'no-location'
-        this._page = 0;
-        this._activeDate = null;
+        this._date = null; // day shown in the hourly table and chart; null = today
         this._tooltip = null;
         this._tabs = null;
         this._viewHolder = null;
@@ -95,6 +93,13 @@ export default class CrispsWeatherExtension extends Extension {
             'changed::use-colored-uv', rebuild,
             'changed::show-uv-index', rebuild,
             'changed::show-precipitation', rebuild,
+            'changed::show-rain-amount', rebuild,
+            'changed::show-wind', rebuild,
+            'changed::show-feels-like', rebuild,
+            'changed::show-humidity', rebuild,
+            'changed::show-air-quality', rebuild,
+            'changed::show-weather-icons', rebuild,
+            'changed::text-scale', rebuild,
             'changed::clock-format', rebuild,
             'changed::favorites', rebuild,
             'changed::active-location', rebuild,
@@ -107,6 +112,7 @@ export default class CrispsWeatherExtension extends Extension {
         this._indicator.menu.connectObject('open-state-changed', (_menu, open) => {
             if (open) {
                 this._manager?.refresh();
+                this._updateLocalTime();
                 this._fillFooter();
             } else {
                 this._hideTooltip();
@@ -172,6 +178,7 @@ export default class CrispsWeatherExtension extends Extension {
         this._tabs = null;
         this._viewHolder = null;
         this._footerBox = null;
+        this._locationInfo = null;
         this._model = null;
     }
 
@@ -179,18 +186,18 @@ export default class CrispsWeatherExtension extends Extension {
         const moved = !this._model || locationId(this._model.location) !== locationId(model.location);
         this._model = model;
         this._status = 'ok';
-        if (moved) {
-            this._page = 0;
-            this._activeDate = null;
-        } else if (this._activeDate && !model.days.some(d => d.date === this._activeDate)) {
-            this._activeDate = null;
-        }
+        if (moved)
+            this._date = null;
         this._applyPanel();
         this._rebuildMenu();
     }
 
     _clockFormat() {
         return resolveClockFormat(this._settings.get_string('clock-format'), this._interfaceSettings);
+    }
+
+    _scaleStyle() {
+        return `font-size: ${this._settings.get_uint('text-scale') / 100}em;`;
     }
 
     _variant() {
@@ -232,8 +239,11 @@ export default class CrispsWeatherExtension extends Extension {
         this._hideTooltip();
         const menu = this._indicator.menu;
         menu.removeAll();
+        // Sizes in the stylesheet are in em, so this scales the whole popup.
+        menu.box.style = this._scaleStyle();
         this._tabs = null;
         this._viewHolder = null;
+        this._locationInfo = null;
 
         if (this._model) {
             this._addLocationSwitcher();
@@ -299,12 +309,45 @@ export default class CrispsWeatherExtension extends Extension {
         switcher.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         switcher.menu.addAction('Add or edit locations…', () => this.openPreferences());
         this._indicator.menu.addMenuItem(switcher);
+        this._addLocationInfo();
+    }
+
+    // "50.09° N, 14.42° E  ·  235 m  ·  CEST  ·  local time 14:32"
+    _addLocationInfo() {
+        const {location, elevation, units, timezone, timezoneAbbr} = this._model;
+        const coord = (v, pos, neg) => `${Math.abs(v).toFixed(2)}° ${v >= 0 ? pos : neg}`;
+        const parts = [`${coord(location.lat, 'N', 'S')}, ${coord(location.lon, 'E', 'W')}`];
+        if (elevation !== null)
+            parts.push(units.temp === '°F' ? `${Math.round(elevation * 3.281)} ft` : `${elevation} m`);
+        parts.push(timezoneAbbr || timezone);
+        this._locationInfo = new St.Label({text: parts.join('  ·  '), style_class: 'cw-location-info cw-dim'});
+        this._locationInfoBase = this._locationInfo.text;
+        this._updateLocalTime();
+        this._indicator.menu.addMenuItem(this._contentItem(this._locationInfo));
+    }
+
+    // Append the location's current time when it differs from the system's.
+    _updateLocalTime() {
+        if (!this._locationInfo || !this._model)
+            return;
+        let text = this._locationInfoBase;
+        const tz = GLib.TimeZone.new_identifier?.(this._model.timezone);
+        const here = GLib.DateTime.new_now_local();
+        if (tz) {
+            const there = GLib.DateTime.new_now(tz);
+            if (there.get_utc_offset() !== here.get_utc_offset()) {
+                const fmt = this._clockFormat() === '12h' ? '%-l:%M %p' : '%H:%M';
+                text += `  ·  local time ${there.format(fmt).trim()}`;
+            }
+        }
+        this._locationInfo.text = text;
     }
 
     _addCurrent() {
-        const {current, units, hours, days} = this._model;
+        const {current, units, hours, days, nowIndex} = this._model;
         const today = days.find(d => d.isToday) ?? days[0];
-        const now = hours[0];
+        const now = hours[nowIndex];
+        const variant = this._variant();
 
         const box = new St.BoxLayout({style_class: 'cw-current', x_expand: true});
         box.add_child(new St.Icon({
@@ -323,22 +366,56 @@ export default class CrispsWeatherExtension extends Extension {
         box.add_child(temp);
 
         const text = new St.BoxLayout({style_class: 'cw-current-text', y_align: Clutter.ActorAlign.CENTER, ...vertical()});
-        text.add_child(new St.Label({text: weatherDesc(current.code), style_class: 'cw-current-desc'}));
+        const addLine = (line, styleClass = 'cw-current-detail cw-dim', style = null) => {
+            const label = new St.Label({text: line, style_class: styleClass});
+            if (style)
+                label.style = style;
+            text.add_child(label);
+        };
+        addLine(weatherDesc(current.code), 'cw-current-desc');
         const detail = [];
         if (current.feels !== null)
             detail.push(`Feels like ${current.feels}°`);
         if (today)
             detail.push(`H ${today.high}°  L ${today.low}°`);
-        text.add_child(new St.Label({text: detail.join('  ·  '), style_class: 'cw-current-detail cw-dim'}));
+        addLine(detail.join('  ·  '));
+        if (today?.sunrise && today?.sunset) {
+            const fmt = this._clockFormat();
+            addLine(`Sunrise ${formatClock(today.sunrise, fmt)}  ·  Sunset ${formatClock(today.sunset, fmt)}`);
+        }
         if (now) {
-            const extra = [`Rain ${now.precip}%`, `Wind ${now.wind} ${units.wind}`];
+            const rain = now.rain > 0 ? `Rain ${now.precip}%, ${formatAmount(now.rain, units.rain)} ${units.rain}` : `Rain ${now.precip}%`;
+            const extra = [rain, `Wind ${now.wind} ${units.wind} ${windArrow(now.windDir)}`];
             if (this._settings.get_boolean('show-uv-index') && now.isDay)
                 extra.push(`UV ${now.uv}`);
-            text.add_child(new St.Label({text: extra.join('  ·  '), style_class: 'cw-current-detail cw-dim'}));
+            addLine(extra.join('  ·  '));
+        }
+        const soon = this._rainSoonText();
+        if (soon)
+            addLine(soon, 'cw-current-detail cw-precip');
+        if (this._settings.get_boolean('show-air-quality') && current.aqi !== null) {
+            const aqi = aqiStyle(current.aqi, variant);
+            let line = `Air quality: ${aqi.label} (${current.aqi})`;
+            if (current.pollen.length > 0)
+                line += `  ·  ${current.pollen[0].name} pollen ${current.pollen[0].value}/m³`;
+            addLine(line, 'cw-current-detail', `color: ${aqi.color};`);
         }
         box.add_child(text);
 
         this._indicator.menu.addMenuItem(this._contentItem(box));
+    }
+
+    _rainSoonText() {
+        const soon = this._model.rainSoon;
+        if (!soon)
+            return null;
+        const {temp, units} = {temp: this._model.current.temp, units: this._model.units};
+        const kind = temp <= (units.temp === '°F' ? 32 : 0) ? 'Snow' : 'Rain';
+        if (soon.state === 'starting')
+            return `${kind} likely in ~${soon.minutes} min`;
+        if (soon.state === 'stopping')
+            return `${kind} easing in ~${soon.minutes} min`;
+        return `${kind} for the next ${soon.minutes >= 120 ? '2 hours' : `${soon.minutes} min`}`;
     }
 
     // ---- Tabs and view switching ----
@@ -365,12 +442,6 @@ export default class CrispsWeatherExtension extends Extension {
         const view = this._settings.get_string('popup-view');
         if (view === this._view)
             return;
-        const hoursPerPage = PAGE_HOURS[view];
-        const oldHoursPerPage = PAGE_HOURS[this._view];
-        if (hoursPerPage && oldHoursPerPage)
-            this._page = Math.floor(this._page * oldHoursPerPage / hoursPerPage);
-        else
-            this._page = 0;
         this._view = view;
         if (view !== 'daily')
             this._hourView = view;
@@ -408,36 +479,43 @@ export default class CrispsWeatherExtension extends Extension {
         });
     }
 
-    // Open the hourly table or chart (whichever was used last) for one day.
+    // Open the hourly table or chart (whichever was used last) on one day.
     _showDay(date) {
-        this._activeDate = date;
+        this._date = date;
         this._settings.set_string('popup-view', this._hourView);
     }
 
-    // Hours for the hourly/chart views, honouring the day filter.
-    _viewHours() {
-        const hours = this._model.hours;
-        return this._activeDate ? hours.filter(h => h.date === this._activeDate) : hours;
+    // ---- Day pages (hourly table and chart) ----
+
+    _dates() {
+        return this._model.days.map(d => d.date);
+    }
+
+    // The day shown; falls back to today when unset or no longer forecast.
+    _shownDate() {
+        return this._dates().includes(this._date) ? this._date : this._model.today;
     }
 
     _pageCount() {
-        if (this._view === 'daily' || this._activeDate && this._view === 'chart')
-            return 1;
-        return Math.max(1, Math.ceil(this._viewHours().length / PAGE_HOURS[this._view]));
+        return this._view === 'daily' ? 1 : this._dates().length;
     }
 
-    _setPage(page) {
-        if (page < 0 || page >= this._pageCount() || page === this._page)
+    _pageIndex() {
+        return Math.max(0, this._dates().indexOf(this._shownDate()));
+    }
+
+    _setPage(index) {
+        const date = this._dates()[index];
+        if (!date || date === this._shownDate())
             return;
         this._transition(() => {
-            this._page = page;
+            this._date = date;
         });
     }
 
     _fillView() {
         if (!this._viewHolder || !this._model)
             return;
-        this._page = Math.min(this._page, this._pageCount() - 1);
         const box = new St.BoxLayout({x_expand: true, ...vertical()});
         if (this._view === 'daily')
             this._buildDaily(box);
@@ -455,127 +533,197 @@ export default class CrispsWeatherExtension extends Extension {
     }
 
     _addSubtitle(box, text) {
-        const row = new St.BoxLayout({style_class: 'cw-subtitle-box', x_align: Clutter.ActorAlign.CENTER});
-        row.add_child(new St.Label({text, style_class: 'cw-subtitle', y_align: Clutter.ActorAlign.CENTER}));
-        if (this._activeDate && this._view !== 'daily') {
-            const chip = new St.Button({
-                label: '✕ All days',
-                style_class: 'cw-chip',
-                can_focus: true,
-                track_hover: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            chip.connect('clicked', () => this._transition(() => {
-                // Stay near the chosen day in the unfiltered list.
-                const first = this._model.hours.findIndex(h => h.date === this._activeDate);
-                this._activeDate = null;
-                this._page = Math.max(0, Math.floor(first / PAGE_HOURS[this._view]));
-            }));
-            row.add_child(chip);
-        }
-        box.add_child(row);
+        box.add_child(new St.Label({text, style_class: 'cw-subtitle', x_align: Clutter.ActorAlign.CENTER}));
+    }
+
+    _daySubtitle(date) {
+        return `${this._dayName(date)}  ·  ${formatShortDate(date)}`;
+    }
+
+    // Which optional data series are on (table columns and chart panels).
+    _series() {
+        const on = key => this._settings.get_boolean(key);
+        return {
+            precip: on('show-precipitation'),
+            rain: on('show-rain-amount'),
+            wind: on('show-wind'),
+            uv: on('show-uv-index'),
+            feels: on('show-feels-like'),
+            humidity: on('show-humidity'),
+            aqi: on('show-air-quality') && this._model.hours.some(h => h.aqi !== null),
+        };
     }
 
     // ---- Views ----
 
     _buildHourly(box) {
         const model = this._model;
+        const {units} = model;
         const fmt = this._clockFormat();
         const variant = this._variant();
-        const showUv = this._settings.get_boolean('show-uv-index');
-        const showPrecip = this._settings.get_boolean('show-precipitation');
+        const series = this._series();
         const coloredUv = this._settings.get_boolean('use-colored-uv');
+        const nowTime = model.hours[model.nowIndex]?.time;
+        const date = this._shownDate();
+        this._addSubtitle(box, this._daySubtitle(date));
 
-        const hours = this._viewHours()
-            .slice(this._page * ROWS_PER_PAGE, (this._page + 1) * ROWS_PER_PAGE);
-        const dates = [...new Set(hours.map(h => h.date))];
-        this._addSubtitle(box, dates.map(d => this._dayName(d)).join(' & '));
-
-        hours.forEach((h, i) => {
-            const row = new St.BoxLayout({style_class: 'cw-row', x_expand: true});
-            if (i % 2 === 0)
-                row.add_style_class_name('cw-row-alt');
-
-            row.add_child(new St.Label({
-                text: h === model.hours[0] ? 'Now' : formatHour(h.time, fmt),
-                style_class: 'cw-hour-time',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            row.add_child(new St.Icon({
-                icon_name: iconName(h.code, h.isDay),
-                style_class: 'cw-row-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            if (showPrecip) {
-                row.add_child(new St.Label({
-                    text: `${h.precip}%`,
-                    style_class: 'cw-precip',
-                    y_align: Clutter.ActorAlign.CENTER,
-                }));
-            }
-            if (showUv) {
-                if (h.isDay) {
-                    const uv = new St.Label({
-                        text: `UV ${h.uv}`,
-                        style_class: 'cw-uv',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    });
-                    if (coloredUv)
-                        uv.style = `color: ${uvStyle(h.uv, variant).color};`;
-                    else
-                        uv.add_style_class_name('cw-dim');
-                    row.add_child(uv);
-                } else {
-                    // No UV at night; keep the column aligned.
-                    row.add_child(new St.Widget({style_class: 'cw-uv'}));
-                }
-            }
-            row.add_child(new St.Label({
-                text: weatherDesc(h.code),
-                style_class: 'cw-cond',
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            const temp = new St.Label({
-                text: `${h.temp}°`,
-                style_class: 'cw-temp',
-                y_align: Clutter.ActorAlign.CENTER,
+        // Columns: header text, style class, and cell text/colour for an hour.
+        const columns = [
+            {header: '', cls: 'cw-hour-time', text: h => (h.time === nowTime ? 'Now' : formatHour(h.time, fmt))},
+        ];
+        if (this._settings.get_boolean('show-weather-icons'))
+            columns.push({icon: true});
+        if (series.precip)
+            columns.push({header: 'Rain', cls: 'cw-precip', text: h => `${h.precip}%`});
+        if (series.rain) {
+            columns.push({
+                header: units.rain,
+                cls: 'cw-amount',
+                text: h => formatAmount(h.rain, units.rain),
+                dim: h => h.rain <= 0,
             });
-            const color = this._tempColor(h.temp);
-            if (color)
-                temp.style = `color: ${color};`;
-            row.add_child(temp);
-            box.add_child(row);
+        }
+        if (series.wind) {
+            columns.push({header: units.wind, cls: 'cw-wind', text: h => `${h.wind} ${windArrow(h.windDir)}`});
+        }
+        if (series.uv) {
+            columns.push({
+                header: 'UV',
+                cls: 'cw-uv',
+                text: h => String(h.uv),
+                color: h => (coloredUv && h.uv > 0 ? uvStyle(h.uv, variant).color : null),
+                dim: h => !coloredUv || h.uv <= 0,
+            });
+        }
+        if (series.humidity)
+            columns.push({header: 'Hum.', cls: 'cw-humidity', text: h => `${h.humidity}%`, dim: () => true});
+        if (series.aqi) {
+            columns.push({
+                header: 'AQI',
+                cls: 'cw-aqi',
+                text: h => (h.aqi === null ? '–' : String(h.aqi)),
+                color: h => (h.aqi === null ? null : aqiStyle(h.aqi, variant).color),
+            });
+        }
+        if (series.feels)
+            columns.push({header: 'Feels', cls: 'cw-feels', text: h => `${h.feels}°`, dim: () => true});
+        columns.push({header: '', cls: 'cw-temp', text: h => `${h.temp}°`, color: h => this._tempColor(h.temp)});
+
+        // Every column gets the same width (homogeneous row), so the table is
+        // evenly spaced and the header lines up; time hugs the left edge and
+        // temperature the right one.
+        const alignOf = col => {
+            if (col.cls === 'cw-hour-time')
+                return Clutter.ActorAlign.START;
+            if (col.cls === 'cw-temp')
+                return Clutter.ActorAlign.END;
+            return Clutter.ActorAlign.CENTER;
+        };
+        const makeRow = (hour, i) => {
+            const row = new St.BoxLayout({style_class: 'cw-row cw-table-row', x_expand: true});
+            row.layout_manager.homogeneous = true;
+            if (hour && i % 2 === 0)
+                row.add_style_class_name('cw-row-alt');
+            if (!hour)
+                row.add_style_class_name('cw-table-header');
+            for (const col of columns) {
+                const cell = {x_expand: true, x_align: col.icon ? Clutter.ActorAlign.CENTER : alignOf(col), y_align: Clutter.ActorAlign.CENTER};
+                if (col.icon) {
+                    row.add_child(hour
+                        ? new St.Icon({
+                            icon_name: iconName(hour.code, hour.isDay),
+                            style_class: 'cw-row-icon',
+                            accessible_name: weatherDesc(hour.code),
+                            ...cell,
+                        })
+                        : new St.Widget({style_class: 'cw-row-icon', ...cell}));
+                    continue;
+                }
+                const label = new St.Label({
+                    text: hour ? col.text(hour) : col.header,
+                    style_class: `${col.cls} cw-cell`,
+                    ...cell,
+                });
+                const color = hour && col.color?.(hour);
+                if (color)
+                    label.style = `color: ${color};`;
+                else if (hour && col.dim?.(hour))
+                    label.add_style_class_name('cw-dim');
+                row.add_child(label);
+            }
+            return row;
+        };
+
+        box.add_child(makeRow(null));
+        const rows = new St.BoxLayout({x_expand: true, ...vertical()});
+        model.hours
+            .filter(h => h.date === date && !h.past)
+            .forEach((h, i) => rows.add_child(makeRow(h, i)));
+        // A day is up to 24 rows; scroll within the page instead of growing the popup.
+        const scroll = new St.ScrollView({
+            style_class: 'cw-table-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
+            x_expand: true,
         });
+        scroll.child = rows;
+        box.add_child(scroll);
+    }
+
+    _describeHour(h) {
+        const model = this._model;
+        const {units} = model;
+        const series = this._series();
+        const nowTime = model.hours[model.nowIndex]?.time;
+        const parts = [
+            h.time === nowTime ? 'Now' : formatHour(h.time, this._clockFormat()),
+            series.feels ? `${h.temp}${units.temp} (feels ${h.feels}°)` : `${h.temp}${units.temp}`,
+            weatherDesc(h.code),
+        ];
+        if (series.precip || series.rain) {
+            const rain = [];
+            if (series.precip)
+                rain.push(`${h.precip}%`);
+            if (series.rain && h.rain > 0)
+                rain.push(`${formatAmount(h.rain, units.rain)} ${units.rain}`);
+            parts.push(`rain ${rain.join(', ')}`);
+        }
+        if (series.wind)
+            parts.push(`${h.wind} ${units.wind} ${windArrow(h.windDir)}`);
+        if (series.uv && h.isDay)
+            parts.push(`UV ${h.uv}`);
+        if (series.humidity)
+            parts.push(`${h.humidity}% humidity`);
+        if (series.aqi && h.aqi !== null)
+            parts.push(`AQI ${h.aqi}`);
+        return parts.join('  ·  ');
     }
 
     _buildChartView(box) {
         const model = this._model;
+        const date = this._shownDate();
+        this._addSubtitle(box, this._daySubtitle(date));
+        // One calendar day, each hour in its own slot (today's past hours included).
         const slots = new Array(SLOTS).fill(null);
-        if (this._activeDate) {
-            // One calendar day, each hour in its own slot (past hours stay empty).
-            for (const h of this._viewHours())
+        for (const h of model.hours) {
+            if (h.date === date)
                 slots[h.hour] = h;
-        } else {
-            this._viewHours()
-                .slice(this._page * SLOTS, (this._page + 1) * SLOTS)
-                .forEach((h, i) => {
-                    slots[i] = h;
-                });
         }
-        const dates = [...new Set(slots.filter(Boolean).map(h => h.date))];
-        this._addSubtitle(box, dates.map(d => this._dayName(d)).join(' & '));
-        if (dates.length === 0)
+        if (!slots.some(Boolean))
             return;
 
+        const series = this._series();
         box.add_child(buildChart({
             slots,
+            series,
             units: model.units,
-            nowTime: model.hours[0]?.time,
+            nowTime: model.hours[model.nowIndex]?.time,
             clockFormat: this._clockFormat(),
             colored: this._settings.get_boolean('use-colored-temps'),
-            showUv: this._settings.get_boolean('show-uv-index'),
+            coloredUv: this._settings.get_boolean('use-colored-uv'),
             variant: this._variant(),
+            describe: h => (h ? this._describeHour(h) : ''),
         }));
     }
 
@@ -587,6 +735,7 @@ export default class CrispsWeatherExtension extends Extension {
         if (days.length === 0)
             return;
 
+        const showRain = this._settings.get_boolean('show-rain-amount');
         const weekMin = Math.min(...days.map(d => d.low));
         const weekMax = Math.max(...days.map(d => d.high));
         const weekRange = weekMax - weekMin || 1;
@@ -613,9 +762,17 @@ export default class CrispsWeatherExtension extends Extension {
             row.add_child(new St.Label({
                 text: `${day.precip}%`,
                 style_class: 'cw-precip',
-                x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
+            if (showRain) {
+                const amount = new St.Label({
+                    text: day.rain > 0 ? `${formatAmount(day.rain, model.units.rain)} ${model.units.rain}` : '',
+                    style_class: 'cw-amount cw-day-amount',
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                row.add_child(amount);
+            }
+            row.add_child(new St.Widget({x_expand: true}));
             row.add_child(new St.Label({
                 text: `${day.low}°`,
                 style_class: 'cw-low',
@@ -654,21 +811,18 @@ export default class CrispsWeatherExtension extends Extension {
 
     // Low→high bar placed within the week's temperature range.
     _rangeBar(day, weekMin, weekRange) {
-        const left = Math.round((day.low - weekMin) / weekRange * RANGE_BAR_PX);
-        const width = Math.max(6, Math.round((day.high - day.low) / weekRange * RANGE_BAR_PX));
-        const track = new St.BoxLayout({
-            style_class: 'cw-range-track',
-            style: `width: ${RANGE_BAR_PX}px;`,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        track.add_child(new St.Widget({style: `width: ${Math.min(left, RANGE_BAR_PX - width)}px;`}));
+        const em = v => `${v.toFixed(2)}em`;
+        const width = Math.max(0.5, (day.high - day.low) / weekRange * RANGE_BAR_EM);
+        const left = Math.min((day.low - weekMin) / weekRange * RANGE_BAR_EM, RANGE_BAR_EM - width);
+        const track = new St.BoxLayout({style_class: 'cw-range-track', y_align: Clutter.ActorAlign.CENTER});
+        track.add_child(new St.Widget({style: `width: ${em(left)};`}));
         const bar = new St.Widget({style_class: 'cw-range-bar'});
         const lo = this._tempColor(day.low);
         const hi = this._tempColor(day.high);
         bar.style = lo
-            ? `width: ${width}px; background-gradient-direction: horizontal; ` +
+            ? `width: ${em(width)}; background-gradient-direction: horizontal; ` +
               `background-gradient-start: ${lo}; background-gradient-end: ${hi};`
-            : `width: ${width}px;`;
+            : `width: ${em(width)};`;
         if (!lo)
             bar.add_style_class_name('cw-range-bar-plain');
         track.add_child(bar);
@@ -740,16 +894,17 @@ export default class CrispsWeatherExtension extends Extension {
         if (this._model && this._view !== 'daily') {
             const count = this._pageCount();
             if (count > 1) {
-                const prev = this._iconButton('go-previous-symbolic', 'Previous page', () => this._setPage(this._page - 1));
-                const next = this._iconButton('go-next-symbolic', 'Next page', () => this._setPage(this._page + 1));
-                for (const [button, enabled] of [[prev, this._page > 0], [next, this._page < count - 1]]) {
+                const page = this._pageIndex();
+                const prev = this._iconButton('go-previous-symbolic', 'Previous day', () => this._setPage(page - 1));
+                const next = this._iconButton('go-next-symbolic', 'Next day', () => this._setPage(page + 1));
+                for (const [button, enabled] of [[prev, page > 0], [next, page < count - 1]]) {
                     button.reactive = enabled;
                     button.can_focus = enabled;
                     button.opacity = enabled ? 255 : 90;
                 }
                 this._footerBox.add_child(prev);
                 this._footerBox.add_child(new St.Label({
-                    text: `${this._page + 1}/${count}`,
+                    text: this._dayName(this._shownDate(), false),
                     style_class: 'cw-page',
                     y_align: Clutter.ActorAlign.CENTER,
                 }));
@@ -794,6 +949,7 @@ export default class CrispsWeatherExtension extends Extension {
             variant: this._variant(),
             coloredUv: this._settings.get_boolean('use-colored-uv'),
         });
+        box.style = this._scaleStyle();
         Main.uiGroup.add_child(box);
         this._tooltip = box;
 

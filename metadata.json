@@ -1,5 +1,5 @@
 {
-  "description": "Panel indicator showing the current temperature (optionally with a weather icon). Popup menu with an hourly forecast (temperature, UV index, precipitation probability, color-coded temps) and a 7-day daily view. Favourite locations searchable by name, postal code or coordinates, plus automatic location via GNOME Location Services or IP. Celsius/Fahrenheit, 12/24-hour clock. Weather data from Open-Meteo.\n\nBased on Chips Weather by ninjabucket.",
+  "description": "Panel indicator showing the current temperature (optionally with a weather icon). Popup with current conditions and an hourly table, hourly charts and a 7-day forecast, paged by day: temperature, feels-like, rain chance and amount, wind, UV index, humidity, and optional air quality and pollen. Favourite locations searchable by name, postal code or coordinates, plus automatic location via GNOME Location Services or IP. Forecasts in the location's own timezone. Celsius/Fahrenheit, 12/24-hour clock. Weather data from Open-Meteo.\n\nBased on Chips Weather by ninjabucket.",
   "name": "Crisps Weather",
   "settings-schema": "org.gnome.shell.extensions.crisps-weather",
   "shell-version": [

@@ -51,17 +51,53 @@
       <summary>Dynamic UV color</summary>
       <description>Use color-coded UV index labels</description>
     </key>
+    <!-- Optional data: each is a column in the hourly table and a chart panel. -->
+    <key name="show-precipitation" type="b">
+      <default>true</default>
+      <summary>Show rain chance</summary>
+      <description>Precipitation probability column and chart</description>
+    </key>
+    <key name="show-rain-amount" type="b">
+      <default>true</default>
+      <summary>Show rain amount</summary>
+      <description>Precipitation amount (mm or in) column and chart</description>
+    </key>
+    <key name="show-wind" type="b">
+      <default>true</default>
+      <summary>Show wind</summary>
+      <description>Wind speed and direction column, and wind and gust chart</description>
+    </key>
     <key name="show-uv-index" type="b">
       <default>true</default>
       <summary>Show UV index</summary>
-      <description>Display UV index in hourly forecast rows</description>
+      <description>UV index column and chart</description>
     </key>
-    <key name="show-precipitation" type="b">
+    <key name="show-humidity" type="b">
+      <default>false</default>
+      <summary>Show humidity</summary>
+      <description>Relative humidity column, and a humidity chart</description>
+    </key>
+    <key name="show-feels-like" type="b">
+      <default>false</default>
+      <summary>Show feels-like temperature</summary>
+      <description>Apparent temperature column, and a dashed line in the temperature chart</description>
+    </key>
+    <key name="show-air-quality" type="b">
+      <default>false</default>
+      <summary>Show air quality</summary>
+      <description>European AQI and pollen (Europe) from the Open-Meteo air-quality API; one extra request per refresh</description>
+    </key>
+    <key name="text-scale" type="u">
+      <range min="80" max="160"/>
+      <default>100</default>
+      <summary>Popup text size (%)</summary>
+      <description>Scales the text, icons and the popup itself</description>
+    </key>
+    <key name="show-weather-icons" type="b">
       <default>true</default>
-      <summary>Show precipitation</summary>
-      <description>Display precipitation chance in hourly forecast rows</description>
+      <summary>Show weather icons</summary>
+      <description>Display the weather icon in hourly forecast rows</description>
     </key>
-
     <key name="popup-view" enum="org.gnome.shell.extensions.crisps-weather.PopupView">
       <default>"hourly"</default>
       <summary>Forecast view</summary>

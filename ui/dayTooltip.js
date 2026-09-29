@@ -11,7 +11,7 @@ import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import {
-    PRECIP_COLORS, dominantCode, iconName, uvStyle, weatherDesc, windDir, windLabel,
+    PRECIP_COLORS, dominantCode, formatAmount, iconName, uvStyle, weatherDesc, windDir, windLabel,
 } from '../lib/conditions.js';
 import {formatClock} from '../lib/timeFormat.js';
 import {vertical} from './chart.js';
@@ -87,7 +87,8 @@ export function buildDayTooltip(day, hours, units, {clockFormat, variant, colore
         }
         detail('Wind', `${max('wind')} ${units.wind}`);
     }
-    detail('Rain', `${day.precip}%`, PRECIP_COLORS[variant]);
+    detail('Rain', day.rain > 0 ? `${day.precip}%, ${formatAmount(day.rain, units.rain)} ${units.rain}` : `${day.precip}%`,
+        PRECIP_COLORS[variant]);
     if (day.sunrise && day.sunset)
         detail('Daylight', `${formatClock(day.sunrise, clockFormat)} – ${formatClock(day.sunset, clockFormat)}`);
 

@@ -7,12 +7,13 @@
 }
 
 .cw-dim,
-.cw-cond,
 .cw-low,
 .cw-subtitle,
 .cw-updated,
 .cw-page,
 .cw-chart-hour,
+.cw-chart-title,
+.cw-table-header StLabel,
 .cw-status-detail,
 .cw-tooltip-key,
 .cw-tooltip-summary {
@@ -23,24 +24,24 @@
     color: #9c6e03;
 }
 
-.cw-precip {
+.cw-precip,
+.cw-amount {
     color: #1e88e5;
 }
 
-.cw-tabs,
-.cw-chip {
-    background-color: rgba(0, 0, 0, 0.06);
+.cw-amount.cw-dim {
+    color: rgba(0, 0, 0, 0.35);
 }
 
+.cw-tabs,
+
 .cw-tab:hover,
-.cw-chip:hover,
 .cw-icon-btn:hover,
 .cw-day:hover {
     background-color: rgba(0, 0, 0, 0.08);
 }
 
 .cw-tab:focus,
-.cw-chip:focus,
 .cw-icon-btn:focus,
 .cw-day:focus {
     background-color: rgba(0, 0, 0, 0.12);

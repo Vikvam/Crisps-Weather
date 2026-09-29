@@ -1,41 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
-env/
+# Build output
+*.shell-extension.zip
+schemas/gschemas.compiled
 
-# Node
-node_modules/
-
-# IDE
+# Editors and OS
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Project-specific
-graphify-out/
-.gitnexus/
-*.log
-.env
-
-# AI tooling (local only, not for GitHub)
+# Local AI tooling
 AGENTS.md
 CLAUDE.md
-opencode.json
 .claude/
-.sisyphus/
-*.whl
-
-# Build output
-*.shell-extension.zip
-chips-weather.zip
-schemas/gschemas.compiled

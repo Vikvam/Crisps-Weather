@@ -330,15 +330,37 @@ export default class WeatherPreferences extends ExtensionPreferences {
 
         const displayGroup = new Adw.PreferencesGroup({title: 'Forecast'});
         page.add(displayGroup);
-        displayGroup.add(switchRow(settings, 'show-uv-index', 'Show UV Index',
-            'In hourly forecast rows'));
-        displayGroup.add(switchRow(settings, 'show-precipitation', 'Show Rain Chance',
+        const scaleRow = Adw.SpinRow.new_with_range(80, 160, 10);
+        scaleRow.title = 'Text Size';
+        scaleRow.subtitle = 'Percent; scales the whole popup';
+        scaleRow.value = settings.get_uint('text-scale');
+        scaleRow.connect('notify::value', () => {
+            const v = Math.round(scaleRow.value);
+            if (v !== settings.get_uint('text-scale'))
+                settings.set_uint('text-scale', v);
+        });
+        displayGroup.add(scaleRow);
+        displayGroup.add(switchRow(settings, 'show-weather-icons', 'Show Weather Icons',
             'In hourly forecast rows'));
         displayGroup.add(switchRow(settings, 'use-colored-temps', 'Dynamic Temperature Color',
             'Blue-to-red gradient for temperatures'));
         displayGroup.add(switchRow(settings, 'use-colored-uv', 'Dynamic UV Color',
             'Color-coded UV index labels'));
 
+        const dataGroup = new Adw.PreferencesGroup({
+            title: 'Data',
+            description: 'Each item is a column in the hourly table and a chart below the temperature',
+        });
+        page.add(dataGroup);
+        dataGroup.add(switchRow(settings, 'show-precipitation', 'Rain Chance', null));
+        dataGroup.add(switchRow(settings, 'show-rain-amount', 'Rain Amount', 'Millimetres, or inches with Fahrenheit'));
+        dataGroup.add(switchRow(settings, 'show-wind', 'Wind', 'Speed, gusts and direction'));
+        dataGroup.add(switchRow(settings, 'show-uv-index', 'UV Index', null));
+        dataGroup.add(switchRow(settings, 'show-humidity', 'Humidity', null));
+        dataGroup.add(switchRow(settings, 'show-feels-like', 'Feels-Like Temperature',
+            'Dashed line in the temperature chart'));
+        dataGroup.add(switchRow(settings, 'show-air-quality', 'Air Quality and Pollen',
+            'European AQI; pollen in Europe only. One extra request per update'));
         return page;
     }
 }

@@ -19,7 +19,7 @@
 }
 
 .cw-content {
-    min-width: 330px;
+    min-width: 30em;
 }
 
 .cw-location {
@@ -27,12 +27,9 @@
     font-size: 1.1em;
 }
 
-.cw-location-box {
-    spacing: 6px;
-}
-
-.cw-location-icon {
-    icon-size: 14px;
+.cw-location-info {
+    font-size: 0.8em;
+    padding-left: 0.3em;
 }
 
 /* ---- Current conditions ---- */
@@ -43,7 +40,7 @@
 }
 
 .cw-current-icon {
-    icon-size: 48px;
+    icon-size: 3.6em;
 }
 
 .cw-current-temp {
@@ -87,16 +84,6 @@
     padding: 6px 0 4px 0;
 }
 
-.cw-chip {
-    padding: 1px 8px;
-    border-radius: 999px;
-    font-size: 0.85em;
-}
-
-.cw-subtitle-box {
-    spacing: 6px;
-}
-
 /* ---- Hourly table ---- */
 
 .cw-row {
@@ -107,27 +94,68 @@
 
 .cw-hour-time {
     font-weight: bold;
-    min-width: 58px;
+    min-width: 4.2em;
 }
 
 .cw-row-icon {
-    icon-size: 16px;
-    min-width: 20px;
+    icon-size: 1.35em;
+    min-width: 1.6em;
 }
 
 .cw-precip {
     font-size: 0.85em;
-    min-width: 34px;
+    min-width: 2.8em;
 }
 
 .cw-uv {
     font-size: 0.85em;
-    min-width: 40px;
+    min-width: 2em;
 }
 
-
-.cw-cond {
+.cw-amount {
     font-size: 0.85em;
+    min-width: 2.4em;
+}
+
+.cw-day-amount {
+    min-width: 4.2em;
+}
+
+.cw-wind {
+    font-size: 0.85em;
+    min-width: 3.8em;
+}
+
+.cw-aqi {
+    font-size: 0.85em;
+    min-width: 2.4em;
+}
+
+.cw-feels {
+    font-size: 0.85em;
+    min-width: 2.6em;
+}
+
+.cw-table-row {
+    padding: 4px 12px;
+    spacing: 10px;
+}
+
+/* Table cells size by content; the homogeneous row evens them out. */
+.cw-table-row .cw-cell {
+    min-width: 0;
+}
+
+.cw-humidity {
+    font-size: 0.85em;
+}
+
+.cw-table-header StLabel {
+    font-weight: normal;
+}
+
+.cw-table-scroll {
+    max-height: 24em;
 }
 
 .cw-temp {
@@ -147,21 +175,21 @@
 
 .cw-day-name {
     font-weight: bold;
-    min-width: 48px;
+    min-width: 3.4em;
 }
 
 .cw-day-icons {
-    min-width: 34px;
+    min-width: 2.8em;
     spacing: 2px;
 }
 
 .cw-day-icon2 {
-    icon-size: 12px;
+    icon-size: 0.95em;
 }
 
 .cw-low,
 .cw-high {
-    min-width: 30px;
+    min-width: 2.2em;
 }
 
 .cw-low {
@@ -173,7 +201,7 @@
 }
 
 .cw-range-track {
-    min-width: 100px;
+    width: 8em;
     height: 4px;
     border-radius: 2px;
 }
@@ -188,19 +216,39 @@
 .cw-chart {
     spacing: 2px;
     padding: 0 4px;
+    /* Room left of the plot for the temperature axis labels. */
+    -cw-axis-width: 2.4em;
+    /* Room right of the plot for a secondary axis (UV, rain amount). */
+    -cw-axis-right-width: 2.2em;
 }
 
 .cw-chart-readout {
     font-size: 0.85em;
     padding-bottom: 2px;
+    text-align: center;
+    /* Two lines, so wrapping never shifts the charts below. */
+    min-height: 2.6em;
 }
 
 .cw-chart-area {
-    height: 120px;
+    height: 9em;
+}
+
+.cw-chart-area-small {
+    height: 4.5em;
+}
+
+.cw-chart-scroll {
+    max-height: 18em;
+}
+
+.cw-chart-title {
+    font-size: 0.8em;
+    padding-top: 6px;
 }
 
 .cw-chart-icon {
-    icon-size: 16px;
+    icon-size: 1.35em;
 }
 
 .cw-chart-hour {
@@ -221,7 +269,7 @@
 }
 
 .cw-icon-btn StIcon {
-    icon-size: 16px;
+    icon-size: 1.2em;
 }
 
 .cw-updated,
@@ -259,7 +307,7 @@
     padding: 10px 12px;
     border-radius: 12px;
     spacing: 3px;
-    width: 230px;
+    width: 17em;
 }
 
 .cw-tooltip-top {
@@ -268,7 +316,7 @@
 }
 
 .cw-tooltip-icon {
-    icon-size: 28px;
+    icon-size: 2em;
 }
 
 .cw-tooltip-title {
@@ -292,7 +340,7 @@
 }
 
 .cw-tooltip-key {
-    min-width: 76px;
+    min-width: 5.5em;
 }
 
 .cw-tooltip-periods {
@@ -306,13 +354,13 @@
 }
 
 .cw-tooltip-period-icon {
-    icon-size: 14px;
-    min-width: 18px;
+    icon-size: 1.05em;
+    min-width: 1.3em;
 }
 
 .cw-tooltip-period-name {
     font-weight: bold;
-    min-width: 72px;
+    min-width: 5.5em;
 }
 
 /* ---- Colours (dark) ---- */
@@ -323,12 +371,13 @@
 }
 
 .cw-dim,
-.cw-cond,
 .cw-low,
 .cw-subtitle,
 .cw-updated,
 .cw-page,
 .cw-chart-hour,
+.cw-chart-title,
+.cw-table-header StLabel,
 .cw-status-detail,
 .cw-tooltip-key,
 .cw-tooltip-summary {
@@ -339,24 +388,24 @@
     color: #f6d32d;
 }
 
-.cw-precip {
+.cw-precip,
+.cw-amount {
     color: #64b5f6;
 }
 
-.cw-tabs,
-.cw-chip {
-    background-color: rgba(255, 255, 255, 0.07);
+.cw-amount.cw-dim {
+    color: rgba(255, 255, 255, 0.35);
 }
 
+.cw-tabs,
+
 .cw-tab:hover,
-.cw-chip:hover,
 .cw-icon-btn:hover,
 .cw-day:hover {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
 .cw-tab:focus,
-.cw-chip:focus,
 .cw-icon-btn:focus,
 .cw-day:focus {
     background-color: rgba(255, 255, 255, 0.14);

@@ -4,12 +4,15 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {normalize} from '../lib/openMeteo.js';
+import {normalize, rainSoon} from '../lib/openMeteo.js';
 import {
     displayName, locationId, parseCoordinates,
     readFavorites, splitCountrySuffix, writeFavorites,
 } from '../lib/location.js';
-import {dominantCode, iconName, tempColor, uvStyle} from '../lib/conditions.js';
+import {
+    aqiStyle, alignedTicks, dominantCode, formatAmount, iconName, tempColor, temperatureTicks, uvStyle, valueTicks, windArrow,
+} from '../lib/conditions.js';
+import {mergeAirQuality, normalizeAirQuality} from '../lib/airQuality.js';
 import {formatClock, formatHour, formatWeekday, resolveClockFormat} from '../lib/timeFormat.js';
 
 const ROOT = GLib.path_get_dirname(GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]));
@@ -53,12 +56,13 @@ for (const name of ['tokyo-celsius.json', 'newyork-fahrenheit.json']) {
     const json = fixture(name);
     const model = normalize(json, {location: LOC, fetchedAt: 1});
 
-    test(`${name}: first hour is the location-local current hour`, () => {
-        eq(model.hours[0].time, `${json.current.time.slice(0, 13)}:00`);
+    test(`${name}: nowIndex is the location-local current hour`, () => {
+        eq(model.hours[model.nowIndex].time, `${json.current.time.slice(0, 13)}:00`);
     });
-    test(`${name}: hours are consecutive from now to the end of the forecast`, () => {
-        const start = json.hourly.time.indexOf(model.hours[0].time);
-        eq(model.hours.length, json.hourly.time.length - start);
+    test(`${name}: hours cover the whole forecast, earlier ones marked past`, () => {
+        eq(model.hours.length, json.hourly.time.length);
+        eq(model.hours.findIndex(h => !h.past), model.nowIndex);
+        eq(model.hours[0].time.slice(11), '00:00');
     });
     test(`${name}: exactly one day is today, and it is the location's date`, () => {
         eq(model.days.filter(d => d.isToday).map(d => d.date), [json.current.time.slice(0, 10)]);
@@ -67,6 +71,10 @@ for (const name of ['tokyo-celsius.json', 'newyork-fahrenheit.json']) {
         const dates = new Set(model.days.map(d => d.date));
         assert(model.hours.every(h => dates.has(h.date)), 'hour dates ⊆ day dates');
     });
+    test(`${name}: location details (elevation, timezone abbreviation)`, () => {
+        eq(model.elevation, Math.round(json.elevation));
+        eq(model.timezoneAbbr, json.timezone_abbreviation);
+    });
     test(`${name}: current temperature comes from current block`, () => {
         eq(model.current.temp, Math.round(json.current.temperature_2m));
     });
@@ -74,22 +82,24 @@ for (const name of ['tokyo-celsius.json', 'newyork-fahrenheit.json']) {
 
 test('units follow the response (°F / mph)', () => {
     const model = normalize(fixture('newyork-fahrenheit.json'), {location: LOC, fetchedAt: 1});
-    eq(model.units, {temp: '°F', wind: 'mph'});
+    eq(model.units, {temp: '°F', wind: 'mph', rain: 'in'});
 });
 test('units follow the response (°C / km/h)', () => {
     const model = normalize(fixture('tokyo-celsius.json'), {location: LOC, fetchedAt: 1});
-    eq(model.units, {temp: '°C', wind: 'km/h'});
+    eq(model.units, {temp: '°C', wind: 'km/h', rain: 'mm'});
 });
 test('current time between slots falls back to the containing hour', () => {
     const json = fixture('tokyo-celsius.json');
     json.current.time = `${json.hourly.time[5].slice(0, 13)}:45`;
-    eq(normalize(json, {location: LOC, fetchedAt: 1}).hours[0].time, json.hourly.time[5]);
+    const model = normalize(json, {location: LOC, fetchedAt: 1});
+    eq(model.hours[model.nowIndex].time, json.hourly.time[5]);
 });
 test('current time missing from hourly falls back to last earlier slot', () => {
     const json = fixture('tokyo-celsius.json');
     json.current.time = `${json.hourly.time[7].slice(0, 13)}:30`;
     json.hourly.time[7] = `${json.hourly.time[7].slice(0, 11)}99:00`; // corrupt slot
-    eq(normalize(json, {location: LOC, fetchedAt: 1}).hours[0].time, json.hourly.time[6]);
+    const model = normalize(json, {location: LOC, fetchedAt: 1});
+    eq(model.hours[model.nowIndex].time, json.hourly.time[6]);
 });
 test('malformed response throws', () => {
     let threw = false;
@@ -201,6 +211,67 @@ test('dominantCode prefers the more frequent, then the more severe code', () => 
     eq(dominantCode([{code: 3}, {code: 61}, {code: 3}]), 3);
     eq(dominantCode([{code: 3}, {code: 61}]), 61);
     eq(dominantCode([]), 0);
+});
+
+test('temperatureTicks: round steps covering the data', () => {
+    eq(temperatureTicks(10, 24), {lo: 10, hi: 25, ticks: [10, 15, 20, 25]});
+    for (const [a, b] of [[20, 20], [18, 19], [-7, 4], [55, 98], [0, 1]]) {
+        const {lo, hi, ticks} = temperatureTicks(a, b);
+        assert(lo <= a && hi >= b, `${a}..${b} inside ${lo}..${hi}`);
+        assert(ticks.length >= 3 && ticks.length <= 5, `${a}..${b}: ${ticks.length} ticks`);
+    }
+});
+
+test('windArrow points downwind', () => {
+    eq([0, 90, 180, 270, 359].map(windArrow), ['↓', '←', '↑', '→', '↓']);
+});
+
+test('aqiStyle bands', () => {
+    eq([10, 30, 50, 70, 90, 150].map(a => aqiStyle(a).label),
+        ['Good', 'Fair', 'Moderate', 'Poor', 'Very Poor', 'Extremely Poor']);
+});
+
+test('formatAmount', () => {
+    eq([formatAmount(0, 'mm'), formatAmount(0.4, 'mm'), formatAmount(12.3, 'mm'), formatAmount(0.05, 'in')],
+        ['0', '0.4', '12', '.05']);
+});
+
+test('valueTicks start at zero and cover the maximum', () => {
+    eq(valueTicks(100), {lo: 0, hi: 100, ticks: [0, 50, 100]});
+    eq(valueTicks(0, 1).hi >= 1, true);
+    for (const m of [0.3, 2.7, 7, 36, 180]) {
+        const {hi, ticks} = valueTicks(m);
+        assert(hi >= m && ticks.length >= 2 && ticks.length <= 4, `${m}: ${ticks}`);
+    }
+});
+
+test('alignedTicks use exactly the given number of intervals', () => {
+    eq(alignedTicks(5, 3, 3), {lo: 0, hi: 6, ticks: [0, 2, 4, 6]});
+    eq(alignedTicks(0, 1, 2), {lo: 0, hi: 1, ticks: [0, 0.5, 1]});
+    eq(alignedTicks(9, 3, 3).hi >= 9, true);
+});
+
+print('rain soon / air quality');
+
+const MIN = t => `2026-09-29T${t}`;
+test('rainSoon: starting, stopping, none', () => {
+    const times = ['14:30', '14:45', '15:00', '15:15', '15:30', '15:45', '16:00'].map(MIN);
+    eq(rainSoon({time: times, precipitation: [0, 0, 0.3, 0.5, 0, 0, 0]}, MIN('14:30')), {state: 'starting', minutes: 30});
+    eq(rainSoon({time: times, precipitation: [0.2, 0.4, 0, 0, 0, 0, 0]}, MIN('14:30')), {state: 'stopping', minutes: 30});
+    eq(rainSoon({time: times, precipitation: [0, 0, 0, 0, 0, 0, 0]}, MIN('14:30')), null);
+    eq(rainSoon(undefined, MIN('14:30')), null);
+});
+
+test('air quality merges by hour', () => {
+    const air = normalizeAirQuality({
+        current: {european_aqi: 33.4, birch_pollen: 0.2, grass_pollen: 12.6, ragweed_pollen: null},
+        hourly: {time: [MIN('00:00'), MIN('01:00')], european_aqi: [31, 26]},
+    });
+    eq(air.aqi, 33);
+    eq(air.pollen, [{name: 'Grass', value: 13}]);
+    const model = {current: {}, hours: [{time: MIN('01:00')}, {time: MIN('02:00')}]};
+    mergeAirQuality(model, air);
+    eq(model.hours.map(h => h.aqi), [26, null]);
 });
 
 print(`\n${passed} passed, ${failed} failed`);
